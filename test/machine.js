@@ -17,7 +17,7 @@ const readText = result => result.content.map(block => block.text ?? '').join('\
 const hasPwsh = assembly => assembly.tools.some(tool => tool.name === 'pwsh')
 
 async function workspace(action) {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'dsh guard 中文 [work] '))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'dsh guard 中文 work '))
   try {
     await writeFile(path.join(cwd, answerFile), 'answer=42\n')
     // The BOM also gives Windows PowerShell 5.1 an explicit UTF-8 encoding.

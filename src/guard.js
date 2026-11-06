@@ -1,7 +1,8 @@
 import { symbols } from '@deepseek-ai/cordis'
+import path from 'node:path'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import * as toolApi from '@deepseek-ai/dsh-tools'
-import { probeShell, incompatibleCommand } from './probe.js'
+import { probeShell, incompatibleCommand, sameDirectory } from './probe.js'
 import { compactShellResult } from './compact.js'
 
 const shells = ['bash', 'pwsh']
@@ -18,6 +19,24 @@ function usesShellExecutor(definition) {
   const prefix = definition?.name === 'pwsh' ? 'Execute a PowerShell command (`pwsh -Command`)' : 'Execute a bash command (`bash -c`)'
   return definition?.description?.startsWith(prefix) && fields?.command?.type === 'string' && fields?.workdir?.type === 'string' &&
     fields?.timeoutMs?.type === 'number' && fields?.description?.type === 'string'
+}
+
+// Only a timeout expires. Retry on demand, share the in-flight promise and
+// back off for a persistently slow executor without creating any timer.
+function startProbe(name, env, signal, timeoutMs, previous) {
+  const delay = Math.min(60000, previous ? previous.delay * 2 : 5000)
+  const probe = { delay, retryAt: Infinity }
+  probe.done = probeShell(name, env.shell, { cwd: env.cwd, sandboxPolicy: env.policy, signal, timeoutMs }).then(facts => {
+    if (facts.reason === 'timeout') probe.retryAt = performance.now() + delay
+    return facts
+  })
+  return probe
+}
+
+function alternateDirectory(args, slot) {
+  if (!slot?.facts?.ready || typeof args?.workdir !== 'string' || !args.workdir) return
+  const target = path.isAbsolute(args.workdir) ? args.workdir : path.resolve(slot.facts.cwd, args.workdir)
+  if (!sameDirectory(target, slot.facts.cwd)) return target
 }
 
 class SessionGuard {
@@ -100,30 +119,54 @@ class SessionGuard {
       }
       // Cordis returns a fresh access proxy for the same Service. Compare the
       // underlying service and retain the proxy only for the actual probe.
-      if (old?.definition === definition && !old.independent && old.identity === env.identity && old.key === env.key) {
+      const same = old?.definition === definition && !old.independent && old.identity === env.identity && old.key === env.key
+      if (same && performance.now() < old.probe.retryAt) {
         jobs.push(old.done)
         continue
       }
       old?.control?.abort()
-      const slot = { definition, identity: env.identity, key: env.key, control: new AbortController() }
+      const slot = { definition, identity: env.identity, key: env.key, env, control: new AbortController(), calls: new WeakMap() }
       this.slots.set(name, slot)
       this.mask(name, definition, true)
-      slot.done = probeShell(name, env.shell, {
-        cwd: env.cwd, sandboxPolicy: env.policy, signal: slot.control.signal, timeoutMs: this.timeoutMs,
-      }).then(facts => {
+      slot.probe = startProbe(name, env, slot.control.signal, this.timeoutMs, same ? old.probe : undefined)
+      slot.done = slot.probe.done.then(facts => {
         if (this.closed || this.slots.get(name) !== slot) return
         slot.facts = facts
         if (facts.ready) this.mask(name, inherited, false)
-        else this.ctx.logger.info('dsh-windows-guard: ' + name + ' unavailable in session ' + this.agent.id)
+        else this.ctx.logger.info('dsh-windows-guard: ' + name + ' unavailable (' + facts.reason + ') in session ' + this.agent.id)
       })
       jobs.push(slot.done)
     }
     return Promise.all(jobs)
   }
 
+  async checkWorkdir(exec) {
+    const slot = this.slots.get('pwsh')
+    const cwd = alternateDirectory(exec.arguments, slot)
+    if (!cwd) return
+    // Only keep the most recent override. A per-call receipt also protects
+    // two concurrent calls in different directories from using each other's result.
+    let entry = slot.alternate
+    const same = entry?.cwd === cwd
+    if (!same || performance.now() >= entry.probe.retryAt) {
+      const probe = startProbe('pwsh', { ...slot.env, cwd }, slot.control.signal, this.timeoutMs, same ? entry.probe : undefined)
+      entry = slot.alternate = { cwd, probe }
+    }
+    const facts = await entry.probe.done
+    if (facts.ready) slot.calls.set(exec, cwd)
+  }
+
   blocked(name) {
     const slot = this.slots.get(name)
     return this.denied.has(name) || (slot && !slot.independent && !slot.facts?.ready)
+  }
+
+  matchesBinding(slot, definition) {
+    if (slot?.definition !== definition) return false
+    try {
+      const env = this.environment()
+      return env.independent ? !!slot.independent : !slot.independent && slot.identity === env.identity && slot.key === env.key
+    } catch { return false }
   }
 
   filterPresentation(context) {
@@ -185,9 +228,9 @@ class SessionGuard {
   pwshHint() {
     const ps = this.slots.get('pwsh')?.facts
     if (!ps?.ready) return
-    const missing = ['grep', 'sed', 'awk'].filter(name => !ps.available.has(name))
+    const unobserved = ['grep', 'sed', 'awk'].filter(name => !ps.available.has(name))
     const version = ps.major < 7 ? 'PS ' + ps.major + ' lacks &&/||. ' : ''
-    const tools = missing.length ? 'Missing ' + missing.join('/') + '. Prefer file tools. ' : ''
+    const tools = unobserved.length ? (ps.complete ? 'Missing ' + unobserved.join('/') + '. ' : '') + 'Prefer file tools. ' : ''
     return version + tools + 'Check [exit code: N]. Interruption can report 1.'
   }
 
@@ -262,13 +305,20 @@ export function mountWindowsGuard(ctx, config = {}) {
       return exec.name + ' is disabled for this Windows session. Use another available tool.'
     if (shells.includes(exec.name)) {
       const current = ctx.tools.get(exec.name, exec.agent)
-      if (usesShellExecutor(current) && state?.slots.get(exec.name)?.definition !== current)
+      if (usesShellExecutor(current) && !state?.matchesBinding(state.slots.get(exec.name), current))
         return exec.name + ' has not passed the Windows probe.'
     }
-    if (exec.name === 'pwsh') return incompatibleCommand(exec.arguments, state?.slots.get('pwsh')?.facts)
+    if (exec.name === 'pwsh') {
+      const slot = state?.slots.get('pwsh')
+      const cwd = alternateDirectory(exec.arguments, slot)
+      if (cwd && slot.calls.get(exec) !== cwd) return 'pwsh could not verify the requested working directory. Use an available file tool.'
+      return incompatibleCommand(exec.arguments, slot?.facts)
+    }
   }
   ctx.on('tools/pre-execute', async (exec, next) => {
-    if (shells.includes(exec.name)) await states.get(exec.agent)?.refresh()
+    const state = states.get(exec.agent)
+    if (shells.includes(exec.name)) await state?.refresh()
+    if (exec.name === 'pwsh') await state?.checkWorkdir(exec)
     const reason = refusal(exec)
     return reason ? { kind: 'deny', reason } : next()
   })

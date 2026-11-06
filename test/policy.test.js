@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { probeShell, incompatibleCommand } from '../src/probe.js'
 import { compactShellResult } from '../src/compact.js'
+import { pwshMarker } from './host.js'
 
 function backend(output, changes = {}) {
   let received
@@ -19,7 +20,7 @@ function backend(output, changes = {}) {
 test('the probe uses the selected DSH executor, session policy, cwd and deadline', async () => {
   const cwd = 'C:\\中文 目录\\[work]'
   const sandboxPolicy = { mode: 'read-only', workspaceRoot: cwd }
-  const host = backend('DSHWIN1:5:grep,awk\r\n')
+  const host = backend(pwshMarker(cwd, 5, 'grep,awk') + '\r\n')
   const facts = await probeShell('pwsh', host.shell, { cwd, sandboxPolicy })
   assert.equal(facts.ready, true)
   assert.equal(facts.major, 5)
@@ -32,14 +33,29 @@ test('the probe uses the selected DSH executor, session policy, cwd and deadline
 })
 
 test('an exit code alone, truncated data or a marker in an error cannot attest a shell', async () => {
-  for (const output of ['', 'DSHWIN1:bash', 'DSHWIN1:0:', 'DSHWIN1:7:invented']) {
-    assert.equal((await probeShell('pwsh', backend(output).shell, {})).ready, false)
+  const cwd = 'C:\\verified'
+  const valid = pwshMarker(cwd, 7)
+  for (const output of ['', 'DSHWIN1:bash', 'DSHWIN1:7:grep', pwshMarker(cwd, 0), pwshMarker(cwd, 7, 'invented'), valid + '0']) {
+    assert.equal((await probeShell('pwsh', backend(output).shell, { cwd })).ready, false)
   }
   for (const changes of [{ exitCode: 1 }, { timedOut: true }, { aborted: true },
-    { signal: 'SIGTERM' }, { sandbox: { denied: true } }, { stdout: { text: 'DSHWIN1:7:', truncated: true } }]) {
-    assert.equal((await probeShell('pwsh', backend('DSHWIN1:7:', changes).shell, {})).ready, false)
+    { signal: 'SIGTERM' }, { sandbox: { denied: true } }, { stdout: { text: valid, truncated: true } }]) {
+    assert.equal((await probeShell('pwsh', backend(valid, changes).shell, { cwd })).ready, false)
   }
   assert.equal((await probeShell('bash', backend('DSHWIN1:bash\n').shell, {})).ready, true)
+})
+
+test('directory proof preserves Unicode and component case, including UNC and trailing separators', async () => {
+  for (const [requested, actual, ready] of [
+    ['c:/项目😀/one/', 'C:\\项目😀\\one', true],
+    ['\\\\server\\share\\space [1]\\', '\\\\server\\share\\space [1]', true],
+    ['C:\\code\\Project', 'C:\\code\\project', false],
+    ['C:\\code\\project[1]', 'C:\\code\\project1', false],
+    ['C:\\code', '', false],
+  ]) {
+    const facts = await probeShell('pwsh', backend(pwshMarker(actual)).shell, { cwd: requested })
+    assert.equal(facts.ready, ready, requested)
+  }
 })
 
 test('the deadline releases the session even if the provider ignores cancellation during launch or collection', async () => {
@@ -62,7 +78,7 @@ test('the deadline releases the session even if the provider ignores cancellatio
 })
 
 test('reject only conclusive PowerShell mismatches; preserve quoting, scripts and real Unix tools', () => {
-  const ps5 = { ready: true, major: 5, available: new Set(['grep']) }
+  const ps5 = { ready: true, major: 5, complete: true, available: new Set(['grep']) }
   const ps7 = { ...ps5, major: 7 }
   for (const command of ['sed -n 1p file', 'rg needle .', 'jq . data.json', 'git status && git diff', 'git status || exit']) {
     assert.ok(incompatibleCommand({ command }, ps5), command)
@@ -78,6 +94,7 @@ test('reject only conclusive PowerShell mismatches; preserve quoting, scripts an
   assert.match(incompatibleCommand({ command: 'a || b' }, ps5), /if \(-not \$\?\)/)
   assert.match(incompatibleCommand({ command: 'a && b || c' }, ps5), /if \(\$\?\).*if \(-not \$\?\)/)
   assert.equal(incompatibleCommand({ command: 'sed file', workdir: 'D:\\other' }, ps7), undefined)
+  assert.equal(incompatibleCommand({ command: 'jq data.json' }, { ...ps5, complete: false }), undefined)
 })
 
 test('fold only long runs of identical shell output lines; keep boundaries, errors and canonical values', () => {

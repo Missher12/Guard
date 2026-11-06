@@ -1,7 +1,58 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHost, fixtureLog } from './host.js'
+import { createHost, fixtureLog, pwshMarker } from './host.js'
 import * as plugin from '../src/index.js'
+
+test('unobserved utilities get a file-tool hint without blocking module-only commands', async t => {
+  const h = await createHost({ probeResult: { exitCode: 0,
+    stdout: { text: pwshMarker(process.cwd(), 7, '', 'open'), truncated: false } } })
+  t.after(h.close)
+  const prompt = (await h.step()).sections.find(s => s.name === 'tool:pwsh').text
+  assert.match(prompt, /Prefer file tools/)
+  assert.doesNotMatch(prompt, /Missing/)
+  assert.equal((await h.call('pwsh', { command: 'jq . data.json', description: 'Invoke optional module' })).isError, false)
+})
+
+test('timeout recovers in one shared probe after cooldown, without replaying any command', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  const h = await createHost({ probeResult: { exitCode: 1, timedOut: true, stdout: { text: '' } } })
+  t.after(h.close)
+  const visible = prompt => prompt.tools.some(tool => tool.name === 'pwsh')
+  assert.equal(visible(await h.step()), false)
+  h.backend.probeResult = undefined
+  assert.equal(visible(await h.step()), false)
+  assert.equal((await h.call('pwsh', { command: 'echo stale' })).isError, true)
+  assert.deepEqual(h.counts, { probes: 1, commands: 0, reads: 0 })
+  now += 6000
+  await Promise.all([h.step(), h.step()])
+  assert.equal(visible(await h.step()), true)
+  assert.deepEqual(h.counts, { probes: 2, commands: 0, reads: 0 })
+})
+
+test('an explicit sandbox denial is not retried when the clock advances', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  const h = await createHost({ probeResult: { exitCode: 1, timedOut: true, sandbox: { denied: true }, stdout: { text: '' } } })
+  t.after(h.close)
+  assert.ok(!(await h.step()).tools.some(tool => tool.name === 'pwsh'))
+  h.backend.probeResult = undefined
+  now += 120000
+  assert.ok(!(await h.step()).tools.some(tool => tool.name === 'pwsh'))
+  assert.equal(h.counts.probes, 1)
+})
+
+test('a binding changed by another pre-execution hook cannot use a previous attestation', async t => {
+  const h = await createHost()
+  t.after(h.close)
+  h.ctx.on('tools/pre-execute', async (exec, next) => {
+    const result = await next()
+    if (exec.name === 'pwsh') h.ctx.get('shell').pwshPath = 'different-powershell.exe'
+    return result
+  })
+  assert.equal((await h.call('pwsh', { command: 'Get-Date', description: 'Check current binding' })).isError, true)
+  assert.equal(h.counts.commands, 0)
+})
 
 test('a broken inherited shell is absent from the first real DSH prompt and cannot execute a stale call', async t => {
   const h = await createHost({ working: false })

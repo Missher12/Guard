@@ -3,13 +3,38 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.2.1-rc.4', '0.2.2-rc.1']
+        shell: [powershell.exe, pwsh.exe]
+    env:
+      DSH_TEST_PWSH: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - if: matrix.dsh == '0.2.2-rc.1'
+        run: npm ci
+      - name: Install the older supported test host
+        if: matrix.dsh == '0.2.1-rc.4'
+        shell: pwsh
+        run: |
+          $original = Get-Content package.json -Raw
+          $deps = @{ '@deepseek-ai/cordis' = '4.0.5'; '@deepseek-ai/schemastery' = '3.18.5' }
+          foreach ($name in ($original | ConvertFrom-Json).devDependencies.PSObject.Properties.Name) {
+            if ($name -like '@deepseek-ai/dsh-*' -and $name -notlike '*tool-executor-*') { $deps[$name] = '0.2.1-rc.4' }
+          }
+          try {
+            @{ name = 'guard-test-host'; private = $true; devDependencies = $deps } |
+              ConvertTo-Json -Depth 4 | Set-Content package.json -Encoding utf8NoBOM
+            npm.cmd install --ignore-scripts --package-lock=false --no-audit --no-fund
+            if ($LASTEXITCODE) { throw "Legacy host installation failed ($LASTEXITCODE)" }
+          } finally { [IO.File]::WriteAllText((Join-Path $PWD 'package.json'), $original) }
+      - name: Check the actual DSH version
+        run: node -e "if (require('./node_modules/@deepseek-ai/dsh-tools/package.json').version !== '${{ matrix.dsh }}') process.exit(1)"
       - run: npm test
       - run: npm run bench
       - run: npm pack

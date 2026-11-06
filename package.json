@@ -1,6 +1,6 @@
 {
   "name": "dsh-windows-guard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "在 DSH 原生 Windows 会话中探测 shell、屏蔽不可用工具并精简重复输出",
   "type": "module",

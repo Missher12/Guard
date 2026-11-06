@@ -9,13 +9,17 @@ import { mountWindowsGuard } from '../src/guard.js'
 
 export const fixtureLog = '检查 [中文 目录] build progress\r\n'.repeat(80) + 'BUILD OK'
 
+export function pwshMarker(cwd, major = 5, names = 'grep', discovery = 'closed') {
+  return 'DSHWIN1:' + major + ':' + names + ':' + discovery + ':' + Buffer.from(cwd, 'utf16le').swap16().toString('hex')
+}
+
 // Real Cordis scopes, official shell tools, prompt builder and dispatch
 // pipeline. Only the OS boundary and the small fixture workspace are scripted.
-export async function createHost({ working = true, bash = false, guard = true, config = {}, installShell,
+export async function createHost({ working = true, bash = false, guard = true, config = {}, probeResult, installShell,
   installRead, pluginEntry = WindowsPlugin, sandboxMode = 'read-only', presetShell, cwd = process.cwd() } = {}) {
   const ctx = new Context()
   const counts = { probes: 0, commands: 0, reads: 0 }
-  const backend = { working, commandError: undefined }
+  const backend = { working, commandError: undefined, probeResult }
   const agents = []
   const policy = { mode: sandboxMode, workspaceRoot: cwd }
   const shell = {
@@ -29,8 +33,9 @@ export async function createHost({ working = true, bash = false, guard = true, c
       if (!probe && backend.commandError) throw backend.commandError
       const psProbe = spec.command.includes('$PSVersionTable')
       const code = probe && !psProbe ? 1 : 0
-      const stdout = probe ? (psProbe ? 'DSHWIN1:5:grep\r\n' : '') : fixtureLog
+      const stdout = probe ? (psProbe ? pwshMarker(spec.workdir ?? cwd) + '\r\n' : '') : fixtureLog
       return { async result() {
+        if (probe && backend.probeResult) return backend.probeResult
         return { exitCode: code, signal: null, timedOut: false, aborted: false, timeoutMs: 5000,
           stdout: { text: stdout, truncated: false }, stderr: { text: '', truncated: false } }
       } }

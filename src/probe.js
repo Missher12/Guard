@@ -9,16 +9,37 @@ const alternatives = new Map([
 ])
 
 const pwshProbe = [
+  // Set this at the top level of DSH's fresh probe process. A nested script
+  // scope or Get-Command -ListImported alone can still import a user's module.
+  "$dshWinDiscovery = if ($PSModuleAutoLoadingPreference -in @('None','ModuleQualified')) { 'closed' } else { 'open' }",
+  "$PSModuleAutoLoadingPreference = 'None'",
   "$dshWinNames = @(Get-Command -Name " + [...alternatives.keys()].join(',') +
     " -ErrorAction SilentlyContinue | ForEach-Object { $_.Name -replace '\\.(exe|cmd|bat|ps1)$','' })",
-  "Write-Output ('DSHWIN1:' + $PSVersionTable.PSVersion.Major + ':' + ($dshWinNames -join ','))",
+  // ASCII UTF-16 code units survive Windows code pages. Basic types and
+  // formatting also work in the read-only sandbox's ConstrainedLanguage mode.
+  "$dshWinPath = if ($PWD.Provider.Name -ceq 'FileSystem') { -join $(foreach ($c in [char[]]$PWD.ProviderPath) { '{0:x4}' -f [int]$c }) }",
+  "('DSHWIN1:{0}:{1}:{2}:{3}' -f $PSVersionTable.PSVersion.Major, ($dshWinNames -join ','), $dshWinDiscovery, $dshWinPath)",
 ].join('; ')
 const bashProbe = 'test -n "$BASH_VERSION" && printf "DSHWIN1:bash\\n"'
-const unavailable = Object.freeze({ ready: false })
+const failure = reason => ({ ready: false, reason })
+
+// Keep component case: Windows also supports case-sensitive directories.
+// Never resolve aliases/junctions on the host outside the session's sandbox.
+function directoryKey(value) {
+  if (typeof value !== 'string' || !value) return undefined
+  if (/^(?:[a-z]:[\\/]|[\\/]{2})/i.test(value))
+    return value.replaceAll('/', '\\').replace(/^[a-z]:/i, drive => drive.toUpperCase()).replace(/\\+$/, '')
+  if (value.startsWith('/')) return value.replace(/\/+$/, '') || '/'
+}
+
+export function sameDirectory(first, second) {
+  const expected = directoryKey(first)
+  return expected !== undefined && expected === directoryKey(second)
+}
 
 /** Fixed, read-only commands. Never start our own process or loosen a sandbox. */
 export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, timeoutMs = 5000 }) {
-  if (!shell) return unavailable
+  if (!shell) return failure('no-executor')
   const deadline = AbortSignal.timeout(timeoutMs)
   const control = signal ? AbortSignal.any([signal, deadline]) : deadline
   let onAbort
@@ -26,7 +47,7 @@ export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, time
     control.throwIfAborted()
     const spec = shell.resolve({
       command: name === 'pwsh' ? pwshProbe : bashProbe, workdir: cwd,
-      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: 2048,
+      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * (cwd?.length ?? 0) + 256),
     })
     // An executor can stall before it returns its handle, or in result().
     // Forward cancellation to DSH, but do not make the agent depend on
@@ -35,20 +56,27 @@ export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, time
       onAbort = () => resolve(undefined)
       control.addEventListener('abort', onAbort, { once: true })
     })
-    if (control.aborted) return unavailable
+    if (control.aborted) return failure(signal?.aborted ? 'cancelled' : 'timeout')
     const work = Promise.resolve(shell.execute(spec)).then(execution => control.aborted ? undefined : execution.result())
     const result = await Promise.race([work, cancelled])
-    if (control.aborted || result.exitCode !== 0 || result.signal || result.timedOut ||
-        result.aborted || result.stdout.truncated || result.sandbox?.denied || result.sandbox?.runnerFailed) return unavailable
+    if (signal?.aborted) return failure('cancelled')
+    if (result?.sandbox?.denied) return failure('denied')
+    if (deadline.aborted || result?.timedOut) return failure('timeout')
+    if (!result || result.exitCode !== 0 || result.signal || result.aborted ||
+        result.stdout?.truncated || result.sandbox?.runnerFailed) return failure('executor')
     const text = result.stdout.text.trim()
-    if (name === 'bash') return text === 'DSHWIN1:bash' ? { ready: true } : unavailable
-    const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*)$/i.exec(text)
-    if (!marker) return unavailable
+    if (name === 'bash') return text === 'DSHWIN1:bash' ? { ready: true } : failure('dialect')
+    const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*):(open|closed):((?:[a-f0-9]{4})*)$/i.exec(text)
+    if (!marker) return failure('dialect')
+    const actual = Buffer.from(marker[4], 'hex').swap16().toString('utf16le')
+    if (!sameDirectory(cwd ?? spec.workdir, actual)) return failure('directory')
     const available = new Set(marker[2].toLowerCase().split(',').filter(Boolean))
-    for (const cmd of available) if (!alternatives.has(cmd)) return unavailable
-    return { ready: true, major: Number(marker[1]), available }
-  } catch {
-    return unavailable
+    for (const cmd of available) if (!alternatives.has(cmd)) return failure('dialect')
+    return { ready: true, major: Number(marker[1]), available, complete: marker[3] === 'closed', cwd: actual }
+  } catch (error) {
+    if (signal?.aborted) return failure('cancelled')
+    if (deadline.aborted || error?.code === 'ETIMEDOUT') return failure('timeout')
+    return failure('executor')
   } finally {
     if (onAbort) control.removeEventListener('abort', onAbort)
   }
@@ -81,6 +109,6 @@ export function incompatibleCommand(args, facts) {
     return 'PowerShell ' + facts.major + ': use if ($?) for && and if (-not $?) for ||.'
   if (args.workdir || args.sandbox_permissions || /[\r\n]/.test(cmd)) return
   const head = /^\s*([a-z]+)(?=\s|$)/i.exec(cmd)?.[1].toLowerCase()
-  if (alternatives.has(head) && !facts.available.has(head))
+  if (facts.complete && alternatives.has(head) && !facts.available.has(head))
     return head + ' is unavailable in this PowerShell session. Use ' + alternatives.get(head) + '.'
 }
