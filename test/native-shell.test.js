@@ -19,13 +19,16 @@ for (const [file, major] of shells) {
   test('native ' + path.basename(file) + ' probe and admitted DSH call', async t => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'dsh 中文 space '))
     t.after(() => rm(cwd, { recursive: true, force: true }))
-    const h = await createHost({ cwd, config: { probeTimeoutMs: 10000 }, async installShell(ctx) {
+    const timeoutMs = 30000
+    const h = await createHost({ cwd, config: { probeTimeoutMs: timeoutMs }, async installShell(ctx) {
       await ctx.plugin(SubprocessLocal)
       await ctx.plugin(PwshLocal, { pwshPath: file })
+      // The control runs before the guard's first probe. A cold CI runner can
+      // consume its first startup budget; timeout recovery has its own test.
+      const ps = await probeShell('pwsh', ctx.get('shell'), { cwd, timeoutMs })
+      assert.equal(ps.major, major, JSON.stringify(ps))
     } })
     t.after(h.close)
-    const ps = await probeShell('pwsh', h.ctx.get('shell'), { cwd, timeoutMs: 10000 })
-    assert.equal(ps.major, major)
     for (let i = 0; i < 3; i++) assert.ok((await h.step()).tools.some(tool => tool.name === 'pwsh'))
     const result = await h.call('pwsh', { command: "Write-Output 'guard-ok'", description: 'Check shell' })
     assert.equal(result.isError, false, JSON.stringify(result.content))
