@@ -1,0 +1,47 @@
+{
+  "name": "dsh-windows-guard",
+  "version": "0.1.1",
+  "private": true,
+  "description": "在 DSH 原生 Windows 会话中探测 shell、屏蔽不可用工具并精简重复输出",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": { ".": "./src/index.js", "./package.json": "./package.json" },
+  "files": ["src", "cordis.patch.yml", "README.md"],
+  "keywords": ["dsh-plugin", "windows", "deepseek-harness"],
+  "engines": { "node": ">=24.9.0", "dsh": "0.2.1-rc.4 || 0.2.2-rc.1" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.4 || 0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.4 || 0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "~3.18.5 || ~3.19.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-scope": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-fs-local": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-pwsh-local": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-pwsh-sandbox": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-sandbox-local": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-scope": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-subprocess-local": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-bash": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-fs": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-pwsh": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "~3.19.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bench": "node scripts/bench.js",
+    "verify:windows": "node scripts/verify-windows.js"
+  }
+}

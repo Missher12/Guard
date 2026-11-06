@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-windows-guard
+      name: dsh-windows-guard
+      disabled: !!js process.platform !== 'win32'
