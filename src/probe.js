@@ -1,21 +1,15 @@
 import path from 'node:path'
 
-// These commands have a native PowerShell alternative. Check availability in the
-// actual shell so Git for Windows, aliases and user-installed tools keep working.
-const alternatives = new Map([
-  ['awk', 'ForEach-Object'], ['chmod', 'Get-Acl / Set-Acl'],
-  ['grep', 'Select-String'], ['head', 'Select-Object -First'], ['jq', 'ConvertFrom-Json'],
-  ['rg', 'the DSH grep tool or Select-String'],
-  ['sed', 'Get-Content -LiteralPath or the file tools'], ['tail', 'Get-Content -Tail'],
-  ['touch', 'New-Item'], ['which', 'Get-Command'],
-])
+// Check in the actual shell so Git for Windows, aliases and installed tools
+// keep working even when another Windows installation lacks these commands.
+const checkedNames = new Set(['awk', 'chmod', 'grep', 'head', 'jq', 'rg', 'sed', 'tail', 'touch', 'which'])
 
 const pwshProbe = [
   // Set this at the top level of DSH's fresh probe process. A nested script
   // scope or Get-Command -ListImported alone can still import a user's module.
   "$dshWinDiscovery = if ($PSModuleAutoLoadingPreference -in @('None','ModuleQualified')) { 'closed' } else { 'open' }",
   "$PSModuleAutoLoadingPreference = 'None'",
-  "$dshWinNames = @(Get-Command -Name " + [...alternatives.keys()].join(',') +
+  "$dshWinNames = @(Get-Command -Name " + [...checkedNames].join(',') +
     " -ErrorAction SilentlyContinue | ForEach-Object { $_.Name -replace '\\.(exe|cmd|bat|ps1)$','' })",
   // ASCII UTF-16 code units survive Windows code pages. Basic types and
   // formatting also work in the read-only sandbox's ConstrainedLanguage mode.
@@ -75,7 +69,7 @@ export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxP
     const actual = Buffer.from(marker[4], 'hex').swap16().toString('utf16le')
     if (!sameDirectory(expectedCwd ?? spec.workdir, actual)) return failure('directory')
     const available = new Set(marker[2].toLowerCase().split(',').filter(Boolean))
-    for (const cmd of available) if (!alternatives.has(cmd)) return failure('dialect')
+    for (const cmd of available) if (!checkedNames.has(cmd)) return failure('dialect')
     return { ready: true, major: Number(marker[1]), available, complete: marker[3] === 'closed', cwd: actual }
   } catch (error) {
     if (signal?.aborted) return failure('cancelled')
@@ -106,13 +100,65 @@ function hasChainOperator(line) {
   return false
 }
 
+function commandHead(command) {
+  return /^\s*([a-z]+)(?=\s|$)/i.exec(command)?.[1].toLowerCase()
+}
+
+// Recognize just these literal operations. An unknown command's name alone
+// does not tell us its requested behavior (e.g. jq -n or rg --files -g).
+function nativeAlternative(command, head) {
+  if (!head || /[\r\n‘’“”]/.test(command)) return
+  const args = command.trim().slice(head.length).trim()
+  if (head === 'rg' && args === '--files') return 'Get-ChildItem -File -Recurse -Name'
+  if (head === 'which') {
+    const name = /^(['"]?)([a-z\d_][\w.+-]*)\1$/i.exec(args)?.[2]
+    if (name && name.toLowerCase() !== 'version') return 'Get-Command'
+  }
+  if (head === 'jq') {
+    const identity = /^(?:\.|'\.'|"\.")[ \t]+(?:(['"])([^'"\x60$]+)\1|([\p{L}\p{N}_.:/\\][\p{L}\p{N}_.:/\\-]*))$/u.exec(args)
+    const file = identity?.[2] ?? identity?.[3]
+    if (file && !file.startsWith('-')) return 'ConvertFrom-Json'
+  }
+}
+
 export function incompatibleCommand(args, facts) {
   const cmd = args?.command
   if (!facts?.ready || typeof cmd !== 'string') return
   if (facts.major < 7 && hasChainOperator(cmd))
     return 'PowerShell ' + facts.major + ': use if ($?) for && and if (-not $?) for ||.'
   if (args.workdir || args.sandbox_permissions || /[\r\n]/.test(cmd)) return
-  const head = /^\s*([a-z]+)(?=\s|$)/i.exec(cmd)?.[1].toLowerCase()
-  if (facts.complete && alternatives.has(head) && !facts.available.has(head))
-    return head + ' is unavailable in this PowerShell session. Use ' + alternatives.get(head) + '.'
+  const head = commandHead(cmd)
+  if (facts.complete && checkedNames.has(head) && !facts.available.has(head)) {
+    const alternative = nativeAlternative(cmd, head)
+    return head + ' is unavailable in this PowerShell session.' + (alternative ? ' Use ' + alternative + '.' : '')
+  }
+}
+
+// A result hint is advisory. Never cache command absence: later calls can load
+// a module, change PATH, or run under another workdir or policy.
+export function suggestMissingCommand(args, facts, result, decision) {
+  const value = result.value
+  if (!facts?.ready || typeof args?.command !== 'string' ||
+      args.sandbox_permissions || args.run_in_background ||
+      decision.kind !== 'accept' || 'content' in decision || 'value' in decision || result.isError ||
+      value?.kind !== 'foreground' || value.exitCode !== 1 || value.signal || value.timedOut || value.aborted ||
+      value.stopped || value.sandbox?.denied || value.sandbox?.runnerFailed || value.stdout?.text !== '' ||
+      value.stdout.truncated || value.stderr?.truncated || typeof value.stderr?.text !== 'string') return decision
+  const head = commandHead(args.command)
+  const alternative = nativeAlternative(args.command, head)
+  if (!alternative || facts.available.has(head)) return decision
+  const stderr = value.stderr.text
+  // Windows PowerShell's category and error id survive localized prose. With
+  // PS7's concise view, match its known English diagnostic or leave it intact.
+  const classic = new RegExp('^' + head + ' *:', 'i').test(stderr) &&
+    new RegExp('ObjectNotFound: \\(' + head + ':String\\) \\[\\], CommandNotFoundException[\\r\\n]+\\s*\\+ FullyQualifiedErrorId\\s*: CommandNotFoundException\\s*$', 'i').test(stderr)
+  const concise = stderr.trimEnd().replaceAll('\r\n', '\n').toLowerCase() === (head + ": The term '" + head +
+    "' is not recognized as a name of a cmdlet, function, script file, or executable program.\n" +
+    'Check the spelling of the name, or if a path was included, verify that the path is correct and try again.').toLowerCase()
+  if (!classic && !concise) return decision
+  const marker = '[exit code: 1]'
+  const body = '[stderr]\n' + stderr + (stderr.endsWith('\n') ? '' : '\n')
+  const block = result.content?.[0]
+  if (result.content?.length !== 1 || block?.type !== 'text' || block.text !== body + marker) return decision
+  return { ...decision, content: [{ ...block, text: body + 'Try ' + alternative + '.\n' + marker }] }
 }

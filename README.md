@@ -4,10 +4,10 @@
 
 ## 在 Windows 上安装
 
-插件版本 **0.1.2**，支持 DSH **0.2.1-rc.4** 和 **0.2.2-rc.1**，宿主 Node.js 24.9 或更高。使用桌面版安装包不必单独安装 npm。桌面版先启动一次以初始化 profile，再完全退出 DSH。在 PowerShell 里进入安装包所在的目录，执行下面两行，然后重新打开 DSH 并新建会话。
+插件版本 **0.1.3**，支持 DSH **0.2.1-rc.4** 和 **0.2.2-rc.1**，宿主 Node.js 24.9 或更高。使用桌面版安装包不必单独安装 npm。桌面版先启动一次以初始化 profile，再完全退出 DSH。在 PowerShell 里进入安装包所在的目录，执行下面两行，然后重新打开 DSH 并新建会话。
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.1.2.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.1.3.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
@@ -15,7 +15,7 @@ dsh.cmd plugin --profile desktop add "$bundlePath"
 
 ## 在你的 Windows 上验收
 
-解压 **`dsh-windows-guard-validation-0.1.2.zip`** 后，在项目目录打开 PowerShell。从 Git 源码运行时，先用 `npm.cmd pack` 生成同目录的插件包。验收需要 Node.js 24.9+、npm 和系统的 `tar.exe`。
+解压 **`dsh-windows-guard-validation-0.1.3.zip`** 后，在项目目录打开 PowerShell。从 Git 源码运行时，先用 `npm.cmd pack` 生成同目录的插件包。验收需要 Node.js 24.9+、npm 和系统的 `tar.exe`。
 
 ```powershell
 npm.cmd ci
@@ -36,8 +36,9 @@ npm.cmd run verify:windows
 | Bash 已安装，但 DSH 给 `bash` 实际接上的执行器是 PowerShell | 隐藏 `bash`。只有同一个执行器能返回 Bash 专属标记才保留 |
 | PowerShell 5 执行简单命令中的 `&&` 或 `||` | 提示成功分支使用 `if ($?)`，失败分支使用 `if (-not $?)`。在 PowerShell 7 放行 |
 | PowerShell 收到以 `grep`、`rg`、`sed`、`awk`、`head`、`jq` 等开头的单行命令 | 预检子进程关闭模块自动加载。若正常命令允许从模块自动加载，未探明的名字交给 PowerShell；只有在裸命令无法自动加载模块且已确认该名字缺失时才拦截 |
+| PowerShell 探测时没看到 `which` | 在工具提示里给出原生命令查询方式 `Get-Command`。识别到标准的“找不到命令”诊断且有适用的替代命令时，在原始错误和退出码之间提示下一步。其他情况保留原文 |
 | 一个原本可用的 shell 突然报启动错误 | 用只读探测复核。如果执行器确实失效，下一轮就隐藏它。原命令只执行一次 |
-| 成功的 shell 输出含大量连续相同行 | 仅在可证明整段文本按指定 V4 分词器会变短时发送一行原文和重复次数。其余输出、退出信息、DSH 的原始结构化值与所有失败输出保留 |
+| 成功的 shell 输出含大量连续相同行或由单个回车刷新的相同进度 | 仅在可证明整段文本按指定 V4 分词器会变短时发送一行原文和重复次数。其余输出、退出信息、DSH 的原始结构化值与失败诊断保留 |
 
 探测继承会话工作目录和沙箱策略。结果按会话缓存，工作目录、沙箱或所选执行器发生变化时重新检查。每次探测都有超时，不调用模型，也不会自动安装 Bash、切换 shell 或申请提权。macOS、Linux 和 WSL 中独立运行的 Linux 版 DSH 会跳过整个插件。
 
@@ -70,8 +71,10 @@ npm.cmd run verify:windows
 | 固定任务 | 关闭插件 | 开启插件 | 失败调用 | 开启后的本地探测 |
 | --- | ---: | ---: | ---: | ---: |
 | PowerShell 启动失败，仍需读出 `answer=42` | 868 tokens | 40 tokens | 1 → 0 | 1 |
-| 读取含 80 行相同进度的构建日志，确认 `BUILD OK` | 1,659 tokens | 851 tokens | 0 → 0 | 1 |
-| PowerShell 可用，只读短文件 | 859 tokens | 830 tokens | 0 → 0 | 1 |
+| 读取含 80 行相同进度的构建日志，确认 `BUILD OK` | 1,659 tokens | 858 tokens | 0 → 0 | 1 |
+| PowerShell 可用，只读短文件 | 859 tokens | 837 tokens | 0 → 0 | 1 |
+
+另在 Windows PowerShell 5.1 中实际输出 80 条用回车刷新的相同进度。单次工具返回在关闭插件和使用 0.1.2 时均为 962 个 V4 token，0.1.3 为 24 个；三次原始 stdout 的 SHA-256 相同。在 PowerShell 5.1 和 7 中运行相同的命令位置查询策略，关闭插件时先尝试 `which cmd.exe`，失败后才调用 `Get-Command cmd.exe`。开启插件后，策略从工具提示中选中 `Get-Command`，两种 shell 都只调用一次便读到同一路径。此对照使用固定选择策略。
 
 这些数值只衡量上述输入片段。完整会话还包含用户消息、历史、模型输出和缓存，实际节省量取决于工作负载。计数所用 `tokenizer.json` 的 SHA-256 为 `89085f12ef79460ac5f66d1119325ddfc694b4ab209d80bbd81d35f081dc9614`。[DeepSeek 官方分词器](https://api-docs.deepseek.com/quick_start/token_usage/)
 

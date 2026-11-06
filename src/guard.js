@@ -2,7 +2,7 @@ import { symbols } from '@deepseek-ai/cordis'
 import path from 'node:path'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import * as toolApi from '@deepseek-ai/dsh-tools'
-import { directoryKey, probeShell, incompatibleCommand, sameDirectory } from './probe.js'
+import { directoryKey, probeShell, incompatibleCommand, sameDirectory, suggestMissingCommand } from './probe.js'
 import { compactShellResult } from './compact.js'
 
 const shells = ['bash', 'pwsh']
@@ -288,7 +288,8 @@ class SessionGuard {
     const unobserved = ['grep', 'sed', 'awk'].filter(name => !ps.available.has(name))
     const version = ps.major < 7 ? 'PS ' + ps.major + ' lacks &&/||. ' : ''
     const tools = unobserved.length ? (ps.complete ? 'Missing ' + unobserved.join('/') + '. ' : '') + 'Prefer file tools. ' : ''
-    return version + tools + 'Check [exit code: N]. Interruption can report 1.'
+    const lookup = ps.available.has('which') ? '' : 'Command lookup: Get-Command. '
+    return version + tools + lookup + 'Check [exit code: N]. Interruption can report 1.'
   }
 
   present(assembly, context) {
@@ -420,7 +421,10 @@ export function mountWindowsGuard(ctx, config = {}) {
     const slot = state?.slots.get(exec.name)
     if (!slot?.control || slot.definition !== ctx.tools.get(exec.name, exec.agent)) return decision
     await state.recheckLaunchError(exec, result)
-    return exec.parent || config.compactOutput === false ? decision : compactShellResult(exec.name, result, decision)
+    if (exec.parent) return decision
+    if (exec.name === 'pwsh' && result.value?.exitCode === 1 && !exec.signal.aborted && state.receipts.get(exec)?.slot === slot)
+      return suggestMissingCommand(exec.arguments, slot.facts, result, decision)
+    return config.compactOutput === false ? decision : compactShellResult(exec.name, result, decision)
   })
   ctx.effect(() => async () => {
     closed = true

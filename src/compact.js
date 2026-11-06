@@ -1,13 +1,14 @@
 function foldLines(text) {
   if (text.length < 512) return text
-  const lines = text.split(/(?<=\n)/)
+  // Keep each terminator with its line, including an entire CRLF pair.
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/)
   const pieces = []
   for (let start = 0; start < lines.length;) {
     const line = lines[start]
     let end = start + 1
     while (lines[end] === line) end++
     const extra = end - start - 1
-    const eol = line.endsWith('\r\n') ? '\r\n' : '\n'
+    const eol = line.endsWith('\r\n') ? '\r\n' : line.slice(-1)
     const marker = '[previous line repeated ' + extra + ' more times]' + eol
     pieces.push(extra >= 3 && extra * line.length > marker.length + 24
       ? line + marker : line.repeat(end - start))
