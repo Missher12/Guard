@@ -102,6 +102,18 @@ test('a burst of distinct workdirs runs at most two probes at once', async t => 
   assert.equal(peak, 2)
 })
 
+test('a full negative cache still verifies a previously unseen healthy directory', async t => {
+  const h = await createHost()
+  t.after(h.close)
+  const call = workdir => h.call('pwsh', { workdir, command: 'Get-Date', description: 'Read date' })
+  h.backend.probeResult = { exitCode: 1, sandbox: { denied: true }, stdout: { text: '' } }
+  for (let i = 0; i < 32; i++) assert.equal((await call('unavailable-' + i)).isError, true)
+  h.backend.probeResult = undefined
+  assert.equal((await call('healthy')).isError, false)
+  assert.equal(h.counts.commands, 1)
+  assert.equal(h.counts.probes, 34)
+})
+
 test('a provider without the last-mile hook requires an absolute directory and still runs healthy calls', async t => {
   const h = await createHost({ shellEnv: { collect: () => ({}) } })
   t.after(h.close)

@@ -41,6 +41,24 @@ function alternateDirectory(args, slot) {
   if (!sameDirectory(target, slot.facts.cwd)) return target
 }
 
+function makeRoomForDirectory(slot, now) {
+  if (slot.directories.size < 32) return true
+  for (const [key, probe] of slot.directories) {
+    if (probe.ready) return slot.directories.delete(key)
+  }
+  // A stream of bad paths must neither starve all future good paths nor
+  // continually evict denials. Never evict work in flight or an active timeout.
+  if (now >= slot.nextNegativeEviction) {
+    for (const [key, probe] of slot.directories) {
+      if (probe.ready === false && (probe.retryAt === Infinity || now >= probe.retryAt)) {
+        slot.nextNegativeEviction = now + 5000
+        return slot.directories.delete(key)
+      }
+    }
+  }
+  return false
+}
+
 class SessionGuard {
   constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs) {
     this.ctx = ctx
@@ -138,7 +156,7 @@ class SessionGuard {
       }
       old?.control?.abort()
       const slot = { definition, identity: env.identity, key: env.key, env, control: new AbortController(),
-        directories: new Map(), lanes: [undefined, undefined] }
+        directories: new Map(), lanes: [undefined, undefined], nextNegativeEviction: 0 }
       this.slots.set(name, slot)
       this.mask(name, definition, true)
       slot.probe = startProbe(name, env, slot.control.signal, this.timeoutMs, same ? old.probe : undefined)
@@ -162,15 +180,13 @@ class SessionGuard {
       this.receipts.set(exec, { slot, epoch, cwd })
       return
     }
-    // Concurrent requests for the same workdir share their probe. At capacity,
-    // evict only successes; alternating paths must never reset a denial/cooldown.
+    // Concurrent requests for the same workdir share their probe.
     const key = directoryKey(cwd) ?? cwd
     let probe = slot.directories.get(key)
     if (!probe || performance.now() >= probe.retryAt) {
-      if (!probe && slot.directories.size >= 32) {
-        const entry = [...slot.directories].find(([, value]) => value.ready)
-        if (!entry) return
-        slot.directories.delete(entry[0])
+      if (!probe && !makeRoomForDirectory(slot, performance.now())) {
+        this.receipts.set(exec, { slot, epoch, busy: true })
+        return
       }
       // Send the stock tool's original spelling to the executor. For a
       // drive-rooted request, compare with the drive of the attested session.
@@ -187,6 +203,7 @@ class SessionGuard {
     const slot = this.slots.get('pwsh')
     const receipt = this.receipts.get(exec)
     if (!receipt && !slot?.control) return
+    if (receipt?.busy) return 'PowerShell directory checks are at capacity. Use a file tool or retry later.'
     if (!receipt || receipt.slot !== slot || receipt.epoch !== this.cwdEpoch ||
         receipt.cwd !== alternateDirectory(exec.arguments, slot))
       return 'pwsh could not verify the requested working directory. Use an available file tool.'
