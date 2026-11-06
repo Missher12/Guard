@@ -4,7 +4,8 @@ import path from 'node:path'
 // keep working even when another Windows installation lacks these commands.
 const checkedNames = new Set(['awk', 'chmod', 'grep', 'head', 'jq', 'rg', 'sed', 'tail', 'touch', 'which'])
 
-const pwshProbe = [
+const hexPath = value => "-join $(foreach ($c in [char[]]" + value + ") { '{0:x4}' -f [int]$c })"
+const pwshDiscovery = [
   // Set this at the top level of DSH's fresh probe process. A nested script
   // scope or Get-Command -ListImported alone can still import a user's module.
   "$dshWinDiscovery = if ($PSModuleAutoLoadingPreference -in @('None','ModuleQualified')) { 'closed' } else { 'open' }",
@@ -13,9 +14,42 @@ const pwshProbe = [
     " -ErrorAction SilentlyContinue | ForEach-Object { $_.Name -replace '\\.(exe|cmd|bat|ps1)$','' })",
   // ASCII UTF-16 code units survive Windows code pages. Basic types and
   // formatting also work in the read-only sandbox's ConstrainedLanguage mode.
-  "$dshWinPath = if ($PWD.Provider.Name -ceq 'FileSystem') { -join $(foreach ($c in [char[]]$PWD.ProviderPath) { '{0:x4}' -f [int]$c }) }",
-  "('DSHWIN1:{0}:{1}:{2}:{3}' -f $PSVersionTable.PSVersion.Major, ($dshWinNames -join ','), $dshWinDiscovery, $dshWinPath)",
+  "$dshWinPath = if ($PWD.Provider.Name -ceq 'FileSystem') { " + hexPath('$PWD.ProviderPath') + ' }',
 ].join('; ')
+const pwshMarker = "('DSHWIN1:{0}:{1}:{2}:{3}' -f $PSVersionTable.PSVersion.Major, ($dshWinNames -join ','), $dshWinDiscovery, $dshWinPath)"
+const dosComponent = /^(?=[^.]{1,8}(?:\.|$))[^.\\/:*?"<>| ~]+~[1-9]\d*(?:\.[^.\\/:*?"<>| ~]{1,3})?$/
+
+function shortDirectory(value) {
+  if (typeof value !== 'string' || !/^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/])/i.test(value) ||
+      /^[\\/]{2}[?.][\\/]/.test(value)) return
+  const spelling = value.replaceAll('/', '\\').replace(/^[a-z]:/i, drive => drive.toUpperCase()).replace(/\\+$/, '')
+  if (directoryKey(value) !== spelling) return
+  const root = path.win32.parse(spelling).root
+  const parts = spelling.slice(root.length).split('\\')
+  if (parts.some(part => /[<>:"|?*\u0000-\u001f]|[. ]$/.test(part)) || !parts.some(part => dosComponent.test(part))) return
+  return { spelling, root, parts }
+}
+
+function pwshProbe(short) {
+  if (!short) return pwshDiscovery + '; ' + pwshMarker
+  // Send only decimal UTF-16 code units. Even quotes, newlines and PowerShell
+  // syntax in a literal path cannot introduce a command into this process.
+  const codes = Array.from({ length: short.spelling.length }, (_, i) => short.spelling.charCodeAt(i))
+  // Resolve the requested directory in the attested executor, after saving
+  // its actual PWD. Import only the system manifest with auto-loading off.
+  return [pwshDiscovery, "$dshWinProof = ''", '$dshWinLiteral = -join [char[]](' + codes.join(',') + ')',
+    "if ($dshWinPath) { try { $dshWinModule = Microsoft.PowerShell.Core\\Import-Module ($PSHOME + '\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1') -PassThru -ErrorAction Stop; " +
+    "$dshWinItem = & ($dshWinModule.ExportedCmdlets['Get-Item']) -LiteralPath $dshWinLiteral -Force -ErrorAction Stop; " +
+    "if ($dshWinItem.PSIsContainer -and ((" + hexPath('$dshWinItem.FullName') + ") -ceq $dshWinPath)) { $dshWinProof = ':short' } } catch {} }",
+    pwshMarker + ' + $dshWinProof'].join('; ')
+}
+
+function matchesShortDirectory(short, actual) {
+  const cwd = directoryKey(actual)
+  if (!short || !cwd?.startsWith(short.root)) return false
+  const parts = cwd.slice(short.root.length).split('\\')
+  return parts.length === short.parts.length && short.parts.every((value, i) => value === parts[i] || dosComponent.test(value))
+}
 const bashProbe = 'test -n "$BASH_VERSION" && printf "DSHWIN1:bash\\n"'
 const failure = reason => ({ ready: false, reason })
 
@@ -43,9 +77,13 @@ export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxP
   let onAbort
   try {
     control.throwIfAborted()
+    const short = name === 'pwsh' ? shortDirectory(expectedCwd) : undefined
+    // Expanded components can be much longer than their 8.3 spelling. Keep the
+    // usual small limit elsewhere and cap alias output at a Win32 path's length.
+    const pathLimit = short ? 32767 : expectedCwd?.length ?? 0
     const spec = shell.resolve({
-      command: name === 'pwsh' ? pwshProbe : bashProbe, workdir: cwd,
-      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * (expectedCwd?.length ?? 0) + 256),
+      command: name === 'pwsh' ? pwshProbe(short) : bashProbe, workdir: cwd,
+      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * pathLimit + 256),
     })
     // An executor can stall before it returns its handle, or in result().
     // Forward cancellation to DSH, but do not make the agent depend on
@@ -64,13 +102,19 @@ export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxP
         result.stdout?.truncated || result.sandbox?.runnerFailed) return failure('executor')
     const text = result.stdout.text.trim()
     if (name === 'bash') return text === 'DSHWIN1:bash' ? { ready: true } : failure('dialect')
-    const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*):(open|closed):((?:[a-f0-9]{4})*)$/i.exec(text)
-    if (!marker) return failure('dialect')
+    const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*):(open|closed):((?:[a-f0-9]{4})*)(:short)?$/i.exec(text)
+    if (!marker || (marker[5] && !short)) return failure('dialect')
     const actual = Buffer.from(marker[4], 'hex').swap16().toString('utf16le')
-    if (!sameDirectory(expectedCwd ?? spec.workdir, actual)) return failure('directory')
+    let attested = actual
+    if (!sameDirectory(expectedCwd ?? spec.workdir, actual)) {
+      if (!marker[5] || !matchesShortDirectory(short, actual)) return failure('directory')
+      // DSH resolves relative workdirs against the session's original spelling.
+      // Its expanded form can contain wildcards that PS5 would resolve differently.
+      attested = short.spelling
+    }
     const available = new Set(marker[2].toLowerCase().split(',').filter(Boolean))
     for (const cmd of available) if (!checkedNames.has(cmd)) return failure('dialect')
-    return { ready: true, major: Number(marker[1]), available, complete: marker[3] === 'closed', cwd: actual }
+    return { ready: true, major: Number(marker[1]), available, complete: marker[3] === 'closed', cwd: attested }
   } catch (error) {
     if (signal?.aborted) return failure('cancelled')
     if (deadline.aborted || error?.code === 'ETIMEDOUT') return failure('timeout')

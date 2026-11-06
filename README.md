@@ -4,10 +4,10 @@
 
 ## 在 Windows 上安装
 
-插件版本 **0.1.3**，支持 DSH **0.2.1-rc.4** 和 **0.2.2-rc.1**，宿主 Node.js 24.9 或更高。使用桌面版安装包不必单独安装 npm。桌面版先启动一次以初始化 profile，再完全退出 DSH。在 PowerShell 里进入安装包所在的目录，执行下面两行，然后重新打开 DSH 并新建会话。
+插件版本 **0.1.4**，支持 DSH **0.2.1-rc.4** 和 **0.2.2-rc.1**，宿主 Node.js 24.9 或更高。使用桌面版安装包不必单独安装 npm。桌面版先启动一次以初始化 profile，再完全退出 DSH。在 PowerShell 里进入安装包所在的目录，执行下面两行，然后重新打开 DSH 并新建会话。
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.1.3.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.1.4.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
@@ -15,7 +15,7 @@ dsh.cmd plugin --profile desktop add "$bundlePath"
 
 ## 在你的 Windows 上验收
 
-解压 **`dsh-windows-guard-validation-0.1.3.zip`** 后，在项目目录打开 PowerShell。从 Git 源码运行时，先用 `npm.cmd pack` 生成同目录的插件包。验收需要 Node.js 24.9+、npm 和系统的 `tar.exe`。
+解压 **`dsh-windows-guard-validation-0.1.4.zip`** 后，在项目目录打开 PowerShell。从 Git 源码运行时，先用 `npm.cmd pack` 生成同目录的插件包。验收需要 Node.js 24.9+、npm 和系统的 `tar.exe`。
 
 ```powershell
 npm.cmd ci
@@ -39,6 +39,8 @@ npm.cmd run verify:windows
 | PowerShell 探测时没看到 `which` | 在工具提示里给出原生命令查询方式 `Get-Command`。识别到标准的“找不到命令”诊断且有适用的替代命令时，在原始错误和退出码之间提示下一步。其他情况保留原文 |
 | 一个原本可用的 shell 突然报启动错误 | 用只读探测复核。如果执行器确实失效，下一轮就隐藏它。原命令只执行一次 |
 | 成功的 shell 输出含大量连续相同行或由单个回车刷新的相同进度 | 仅在可证明整段文本按指定 V4 分词器会变短时发送一行原文和重复次数。其余输出、退出信息、DSH 的原始结构化值与失败诊断保留 |
+
+Windows 会用 `PROGRA~1` 这样的 8.3 短路径表示长目录名。0.1.4 会在同一个 PowerShell 执行环境里核对两者是否指向同一目录，再决定是否放行。
 
 探测继承会话工作目录和沙箱策略。结果按会话缓存，工作目录、沙箱或所选执行器发生变化时重新检查。每次探测都有超时，不调用模型，也不会自动安装 Bash、切换 shell 或申请提权。macOS、Linux 和 WSL 中独立运行的 Linux 版 DSH 会跳过整个插件。
 
