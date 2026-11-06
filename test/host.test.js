@@ -103,6 +103,8 @@ test('a burst of distinct workdirs runs at most two probes at once', async t => 
 })
 
 test('a full negative cache still verifies a previously unseen healthy directory', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
   const h = await createHost()
   t.after(h.close)
   const call = workdir => h.call('pwsh', { workdir, command: 'Get-Date', description: 'Read date' })
@@ -112,6 +114,17 @@ test('a full negative cache still verifies a previously unseen healthy directory
   assert.equal((await call('healthy')).isError, false)
   assert.equal(h.counts.commands, 1)
   assert.equal(h.counts.probes, 34)
+  // Eviction forgets a verdict, never grants permission: the same sandbox
+  // must attest an evicted target again before a user command can start.
+  h.backend.probeResult = { exitCode: 1, sandbox: { denied: true }, stdout: { text: '' } }
+  assert.equal((await call('unavailable-0')).isError, true)
+  assert.equal((await call('unavailable-1')).isError, true)
+  assert.equal((await call('another-new-path')).isError, true)
+  assert.equal(h.counts.probes, 35)
+  assert.equal(h.counts.commands, 1)
+  now += 6000
+  h.backend.probeResult = undefined
+  assert.equal((await call('another-new-path')).isError, false)
 })
 
 test('a provider without the last-mile hook requires an absolute directory and still runs healthy calls', async t => {
