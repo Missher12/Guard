@@ -2,7 +2,7 @@ import { symbols } from '@deepseek-ai/cordis'
 import path from 'node:path'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import * as toolApi from '@deepseek-ai/dsh-tools'
-import { probeShell, incompatibleCommand, sameDirectory } from './probe.js'
+import { directoryKey, probeShell, incompatibleCommand, sameDirectory } from './probe.js'
 import { compactShellResult } from './compact.js'
 
 const shells = ['bash', 'pwsh']
@@ -23,10 +23,12 @@ function usesShellExecutor(definition) {
 
 // Only a timeout expires. Retry on demand, share the in-flight promise and
 // back off for a persistently slow executor without creating any timer.
-function startProbe(name, env, signal, timeoutMs, previous) {
+function startProbe(name, env, signal, timeoutMs, previous, after) {
   const delay = Math.min(60000, previous ? previous.delay * 2 : 5000)
   const probe = { delay, retryAt: Infinity }
-  probe.done = probeShell(name, env.shell, { cwd: env.cwd, sandboxPolicy: env.policy, signal, timeoutMs }).then(facts => {
+  const run = () => probeShell(name, env.shell, { cwd: env.cwd, expectedCwd: env.expectedCwd, sandboxPolicy: env.policy, signal, timeoutMs })
+  probe.done = (after ? after.then(run) : run()).then(facts => {
+    probe.ready = facts.ready
     if (facts.reason === 'timeout') probe.retryAt = performance.now() + delay
     return facts
   })
@@ -40,7 +42,7 @@ function alternateDirectory(args, slot) {
 }
 
 class SessionGuard {
-  constructor(ctx, agent, denied, timeoutMs, mutate) {
+  constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs) {
     this.ctx = ctx
     this.agent = agent
     this.denied = denied
@@ -49,7 +51,16 @@ class SessionGuard {
     this.masks = new Map()
     this.local = new Map()
     this.slots = new Map()
+    this.receipts = new WeakMap()
+    this.monitoredEnvs = monitoredEnvs
+    this.cwdEpoch = 0
     this.closed = false
+  }
+
+  noteDirectory(cwd) {
+    if (typeof cwd !== 'string') return
+    if (this.lastCwd !== undefined && !sameDirectory(this.lastCwd, cwd)) this.cwdEpoch++
+    this.lastCwd = cwd
   }
 
   // restrict() filters inherited definitions. Agent-owned shadows are exempt
@@ -83,6 +94,7 @@ class SessionGuard {
     }
     const shell = services.get('shell')
     const cwd = services.get('workingDirectory')?.get(this.agent.session)
+    this.noteDirectory(cwd)
     const resolver = services.get('sandboxPolicy')
     const policy = resolver?.resolve({ session: this.agent.session })
     const available = shell && (shell.sandboxMode === undefined || policy)
@@ -125,7 +137,8 @@ class SessionGuard {
         continue
       }
       old?.control?.abort()
-      const slot = { definition, identity: env.identity, key: env.key, env, control: new AbortController(), calls: new WeakMap() }
+      const slot = { definition, identity: env.identity, key: env.key, env, control: new AbortController(),
+        directories: new Map(), lanes: [undefined, undefined] }
       this.slots.set(name, slot)
       this.mask(name, definition, true)
       slot.probe = startProbe(name, env, slot.control.signal, this.timeoutMs, same ? old.probe : undefined)
@@ -142,18 +155,45 @@ class SessionGuard {
 
   async checkWorkdir(exec) {
     const slot = this.slots.get('pwsh')
+    if (!slot?.facts?.ready) return
+    const epoch = this.cwdEpoch
     const cwd = alternateDirectory(exec.arguments, slot)
-    if (!cwd) return
-    // Only keep the most recent override. A per-call receipt also protects
-    // two concurrent calls in different directories from using each other's result.
-    let entry = slot.alternate
-    const same = entry?.cwd === cwd
-    if (!same || performance.now() >= entry.probe.retryAt) {
-      const probe = startProbe('pwsh', { ...slot.env, cwd }, slot.control.signal, this.timeoutMs, same ? entry.probe : undefined)
-      entry = slot.alternate = { cwd, probe }
+    if (!cwd) {
+      this.receipts.set(exec, { slot, epoch, cwd })
+      return
     }
-    const facts = await entry.probe.done
-    if (facts.ready) slot.calls.set(exec, cwd)
+    // Concurrent requests for the same workdir share their probe. At capacity,
+    // evict only successes; alternating paths must never reset a denial/cooldown.
+    const key = directoryKey(cwd) ?? cwd
+    let probe = slot.directories.get(key)
+    if (!probe || performance.now() >= probe.retryAt) {
+      if (!probe && slot.directories.size >= 32) {
+        const entry = [...slot.directories].find(([, value]) => value.ready)
+        if (!entry) return
+        slot.directories.delete(entry[0])
+      }
+      // Send the stock tool's original spelling to the executor. For a
+      // drive-rooted request, compare with the drive of the attested session.
+      const expectedCwd = process.platform === 'win32' && /^[\\/](?![\\/])/.test(cwd) ? path.resolve(slot.facts.cwd, cwd) : cwd
+      probe = startProbe('pwsh', { ...slot.env, cwd, expectedCwd }, slot.control.signal, this.timeoutMs, probe, slot.lanes.shift())
+      slot.directories.set(key, probe)
+      slot.lanes.push(probe.done.catch(() => {}))
+    }
+    const facts = await probe.done
+    if (facts.ready) this.receipts.set(exec, { slot, epoch, cwd })
+  }
+
+  workdirRefusal(exec) {
+    const slot = this.slots.get('pwsh')
+    const receipt = this.receipts.get(exec)
+    if (!receipt && !slot?.control) return
+    if (!receipt || receipt.slot !== slot || receipt.epoch !== this.cwdEpoch ||
+        receipt.cwd !== alternateDirectory(exec.arguments, slot))
+      return 'pwsh could not verify the requested working directory. Use an available file tool.'
+    const services = this.agent.ctx
+    const registry = services.get('agentPresets')?.serviceFor?.(this.agent, 'shellEnv') ?? services.get('shellEnv')
+    if (!this.monitoredEnvs.has(original(registry)) && directoryKey(exec.arguments?.workdir) === undefined)
+      return 'This PowerShell provider requires a fully qualified workdir. Use the absolute workspace path or a file tool.'
   }
 
   blocked(name) {
@@ -257,7 +297,7 @@ class SessionGuard {
     for (const slot of this.slots.values()) slot.control?.abort()
     for (const { lift } of this.masks.values()) this.mutate(lift)
     this.masks.clear()
-    await Promise.allSettled([...this.slots.values()].map(slot => slot.done))
+    await Promise.allSettled([...this.slots.values()].flatMap(slot => [slot.done, ...(slot.lanes ?? [])]))
   }
 }
 
@@ -265,6 +305,7 @@ export function mountWindowsGuard(ctx, config = {}) {
   const denied = new Set(config.denyTools ?? [])
   if (denied.has('run_code')) throw new Error('denyTools must name capabilities; run_code is the DSH program transport.')
   const states = new Map()
+  const monitoredEnvs = new WeakSet()
   let closed = false
   let scheduled = false
   let mutating = false
@@ -273,7 +314,7 @@ export function mountWindowsGuard(ctx, config = {}) {
     try { return action() } finally { mutating = false }
   }
   function attach(agent) {
-    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000, mutate))
+    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000, mutate, monitoredEnvs))
     return states.get(agent)
   }
   function refreshLater() {
@@ -296,6 +337,7 @@ export function mountWindowsGuard(ctx, config = {}) {
   ctx.on('session/event', (session, event) => {
     if (event.type !== 'sandbox/mode' && event.type !== 'working-directory/change') return
     for (const state of states.values()) if (state.agent.session === session) {
+      if (event.type === 'working-directory/change') state.noteDirectory(event.data?.cwd)
       void Promise.resolve(state.refresh()).catch(error => ctx.logger.warn(String(error)))
     }
   })
@@ -310,9 +352,7 @@ export function mountWindowsGuard(ctx, config = {}) {
     }
     if (exec.name === 'pwsh') {
       const slot = state?.slots.get('pwsh')
-      const cwd = alternateDirectory(exec.arguments, slot)
-      if (cwd && slot.calls.get(exec) !== cwd) return 'pwsh could not verify the requested working directory. Use an available file tool.'
-      return incompatibleCommand(exec.arguments, slot?.facts)
+      return state?.workdirRefusal(exec) ?? incompatibleCommand(exec.arguments, slot?.facts)
     }
   }
   ctx.on('tools/pre-execute', async (exec, next) => {
@@ -323,6 +363,23 @@ export function mountWindowsGuard(ctx, config = {}) {
     return reason ? { kind: 'deny', reason } : next()
   })
   ctx.tools.guard(refusal)
+  // Both stock tools call shellEnv.collect(exec) synchronously after their
+  // async workingDirectory.ensure() / approval and before resolving the shell
+  // spec or starting a job. This contributor adds no environment variables.
+  ctx.inject(['shellEnv'], inner => {
+    const registry = inner.get('shellEnv')
+    if (typeof registry?.register !== 'function') return
+    registry.register({ name: 'dsh-windows-guard-workdir', variables: {}, resolve(exec) {
+      if (exec.name === 'pwsh' && states.get(exec.agent)?.receipts.has(exec)) {
+        const reason = refusal(exec)
+        if (reason) throw new Error(reason)
+      }
+      return {}
+    } })
+    const identity = original(registry)
+    monitoredEnvs.add(identity)
+    inner.effect(() => () => monitoredEnvs.delete(identity))
+  })
   // DSH resolves prompt variables before collecting provider-owned schemas.
   // Invalidate a changed shell synchronously here so the collector cannot
   // advertise it while the new probe is pending, even on the first changed step.
@@ -342,7 +399,10 @@ export function mountWindowsGuard(ctx, config = {}) {
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const decision = await next()
     if (decision.kind !== 'accept' || !shells.includes(exec.name)) return decision
-    await states.get(exec.agent)?.recheckLaunchError(exec, result)
+    const state = states.get(exec.agent)
+    const slot = state?.slots.get(exec.name)
+    if (!slot?.control || slot.definition !== ctx.tools.get(exec.name, exec.agent)) return decision
+    await state.recheckLaunchError(exec, result)
     return exec.parent || config.compactOutput === false ? decision : compactShellResult(exec.name, result, decision)
   })
   ctx.effect(() => async () => {

@@ -29,6 +29,7 @@
     "@deepseek-ai/dsh-pwsh-sandbox": "0.2.2-rc.1",
     "@deepseek-ai/dsh-sandbox-local": "0.2.2-rc.1",
     "@deepseek-ai/dsh-scope": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-shell-env": "0.2.2-rc.1",
     "@deepseek-ai/dsh-subprocess-local": "0.2.2-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tool-bash": "0.2.2-rc.1",

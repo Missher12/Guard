@@ -22,7 +22,7 @@ test('timeout recovers in one shared probe after cooldown, without replaying any
   assert.equal(visible(await h.step()), false)
   h.backend.probeResult = undefined
   assert.equal(visible(await h.step()), false)
-  assert.equal((await h.call('pwsh', { command: 'echo stale' })).isError, true)
+  assert.equal((await h.call('pwsh', { command: 'echo stale', description: 'Try stale tool name' })).isError, true)
   assert.deepEqual(h.counts, { probes: 1, commands: 0, reads: 0 })
   now += 6000
   await Promise.all([h.step(), h.step()])
@@ -52,6 +52,74 @@ test('a binding changed by another pre-execution hook cannot use a previous atte
   })
   assert.equal((await h.call('pwsh', { command: 'Get-Date', description: 'Check current binding' })).isError, true)
   assert.equal(h.counts.commands, 0)
+})
+
+test('session directory recovery inside the stock pwsh body cannot dispatch an unchecked command', async t => {
+  let directory = process.cwd()
+  let recover = false
+  const h = await createHost({ workingDirectory: {
+    get: () => directory,
+    ensure: async () => {
+      if (recover) directory += '/recovered'
+      return directory
+    },
+  } })
+  t.after(h.close)
+  const args = { command: 'Get-Date', description: 'Check directory recovery' }
+  assert.equal((await h.call('pwsh', args)).isError, false)
+  recover = true
+  assert.equal((await h.call('pwsh', args)).isError, true)
+  assert.equal(h.counts.commands, 1, 'the recovered directory must never see the second command')
+})
+
+test('alternating concurrent workdirs share their probes and keep other directories hard-denied', async t => {
+  const h = await createHost()
+  t.after(h.close)
+  const call = workdir => h.call('pwsh', { workdir, command: 'Get-Date', description: 'Use requested directory' })
+  const results = await Promise.all(['alpha', 'beta', 'alpha', 'beta', 'alpha', 'beta'].map(call))
+  assert.ok(results.every(result => !result.isError))
+  assert.equal(h.counts.probes, 3, 'one default and one per requested workdir')
+  h.backend.probeResult = { exitCode: 1, sandbox: { denied: true }, stdout: { text: '' } }
+  assert.equal((await call('denied')).isError, true)
+  h.backend.probeResult = undefined
+  assert.equal((await call('gamma')).isError, false)
+  assert.equal((await call('denied')).isError, true)
+  assert.equal(h.counts.probes, 5)
+})
+
+test('a burst of distinct workdirs runs at most two probes at once', async t => {
+  const h = await createHost()
+  t.after(h.close)
+  let active = 0, peak = 0
+  h.backend.probeResult = async spec => {
+    peak = Math.max(peak, ++active)
+    await new Promise(resolve => setImmediate(resolve))
+    active--
+    return { exitCode: 0, stdout: { text: pwshMarker(spec.workdir) } }
+  }
+  const calls = Array.from({ length: 8 }, (_, i) => h.call('pwsh', { workdir: 'dir' + i, command: 'Get-Date', description: 'Read date' }))
+  assert.ok((await Promise.all(calls)).every(result => !result.isError))
+  assert.equal(peak, 2)
+})
+
+test('a provider without the last-mile hook requires an absolute directory and still runs healthy calls', async t => {
+  const h = await createHost({ shellEnv: { collect: () => ({}) } })
+  t.after(h.close)
+  const args = { command: 'Get-Date', description: 'Read date' }
+  assert.equal((await h.call('pwsh', args)).isError, true)
+  assert.equal((await h.call('pwsh', { ...args, workdir: process.cwd() })).isError, false)
+  assert.equal(h.counts.commands, 1)
+})
+
+test('a third-party bash keeps its own result renderer', async t => {
+  const h = await createHost()
+  t.after(h.close)
+  h.agent.ctx.tools.register({ name: 'bash', description: 'Vendor persistent terminal', parameters: { type: 'object', properties: {} },
+    output: { schema: { type: 'object', properties: { exitCode: { type: 'integer' } } },
+      render: () => [{ type: 'text', text: fixtureLog }] }, execute: () => ({ exitCode: 0 }) })
+  const result = await h.call('bash')
+  assert.equal(result.isError, false)
+  assert.equal(result.content[0].text, fixtureLog)
 })
 
 test('a broken inherited shell is absent from the first real DSH prompt and cannot execute a stale call', async t => {

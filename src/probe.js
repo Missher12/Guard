@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 // These commands have a native PowerShell alternative. Check availability in the
 // actual shell so Git for Windows, aliases and user-installed tools keep working.
 const alternatives = new Map([
@@ -25,11 +27,13 @@ const failure = reason => ({ ready: false, reason })
 
 // Keep component case: Windows also supports case-sensitive directories.
 // Never resolve aliases/junctions on the host outside the session's sandbox.
-function directoryKey(value) {
+export function directoryKey(value) {
   if (typeof value !== 'string' || !value) return undefined
+  // Extended/device paths have their own Win32 dot/separator semantics.
+  if (/^[\\/]{2}[?.][\\/]/.test(value)) return value
   if (/^(?:[a-z]:[\\/]|[\\/]{2})/i.test(value))
-    return value.replaceAll('/', '\\').replace(/^[a-z]:/i, drive => drive.toUpperCase()).replace(/\\+$/, '')
-  if (value.startsWith('/')) return value.replace(/\/+$/, '') || '/'
+    return path.win32.normalize(value).replace(/^[a-z]:/i, drive => drive.toUpperCase()).replace(/\\+$/, '')
+  if (process.platform !== 'win32' && value.startsWith('/')) return path.posix.normalize(value).replace(/\/+$/, '') || '/'
 }
 
 export function sameDirectory(first, second) {
@@ -38,7 +42,7 @@ export function sameDirectory(first, second) {
 }
 
 /** Fixed, read-only commands. Never start our own process or loosen a sandbox. */
-export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, timeoutMs = 5000 }) {
+export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxPolicy, signal, timeoutMs = 5000 }) {
   if (!shell) return failure('no-executor')
   const deadline = AbortSignal.timeout(timeoutMs)
   const control = signal ? AbortSignal.any([signal, deadline]) : deadline
@@ -47,7 +51,7 @@ export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, time
     control.throwIfAborted()
     const spec = shell.resolve({
       command: name === 'pwsh' ? pwshProbe : bashProbe, workdir: cwd,
-      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * (cwd?.length ?? 0) + 256),
+      sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * (expectedCwd?.length ?? 0) + 256),
     })
     // An executor can stall before it returns its handle, or in result().
     // Forward cancellation to DSH, but do not make the agent depend on
@@ -69,7 +73,7 @@ export async function probeShell(name, shell, { cwd, sandboxPolicy, signal, time
     const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*):(open|closed):((?:[a-f0-9]{4})*)$/i.exec(text)
     if (!marker) return failure('dialect')
     const actual = Buffer.from(marker[4], 'hex').swap16().toString('utf16le')
-    if (!sameDirectory(cwd ?? spec.workdir, actual)) return failure('directory')
+    if (!sameDirectory(expectedCwd ?? spec.workdir, actual)) return failure('directory')
     const available = new Set(marker[2].toLowerCase().split(',').filter(Boolean))
     for (const cmd of available) if (!alternatives.has(cmd)) return failure('dialect')
     return { ready: true, major: Number(marker[1]), available, complete: marker[3] === 'closed', cwd: actual }

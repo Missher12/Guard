@@ -44,7 +44,12 @@ for (const shell of ['powershell.exe', 'pwsh.exe']) {
         const baseline = await createHost({ ...options, guard: false })
         t.after(baseline.close)
         const first = await baseline.call('pwsh', args)
-        const correct = !first.isError && first.value.stdout.text.trim() === 'EXPECTED'
+        assert.equal(first.isError, false, 'control must complete a real read')
+        assert.equal(first.value.exitCode, 0)
+        const content = first.value.stdout.text.trim()
+        assert.ok(['EXPECTED', 'NEIGHBOR'].includes(content), 'control must identify which file it read')
+        if (shell === 'pwsh.exe') assert.equal(content, 'EXPECTED')
+        const correct = content === 'EXPECTED'
         assert.equal(commands, 1)
         const h = await createHost(options)
         t.after(h.close)
@@ -62,6 +67,13 @@ for (const shell of ['powershell.exe', 'pwsh.exe']) {
         if (override) {
           assert.ok((await h.step()).tools.some(tool => tool.name === 'pwsh'))
           assert.equal((await h.call('pwsh', { command: "'ok'", description: 'Use the normal directory' })).isError, false)
+          if (shell === 'pwsh.exe') {
+            for (const workdir of [root + '\\project1\\..\\project[1]', intended.slice(path.parse(intended).root.length - 1)]) {
+              const other = await h.call('pwsh', { ...args, workdir })
+              assert.equal(other.isError, false, 'a healthy PowerShell should resolve ' + workdir)
+              assert.equal(other.value.stdout.text.trim(), 'EXPECTED')
+            }
+          }
         }
       })
   }

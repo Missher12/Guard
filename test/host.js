@@ -2,6 +2,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { bindScopeParent, createScope, scopeTarget } from '@deepseek-ai/dsh-scope'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
+import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as WindowsPlugin from '../src/index.js'
@@ -15,7 +16,7 @@ export function pwshMarker(cwd, major = 5, names = 'grep', discovery = 'closed')
 
 // Real Cordis scopes, official shell tools, prompt builder and dispatch
 // pipeline. Only the OS boundary and the small fixture workspace are scripted.
-export async function createHost({ working = true, bash = false, guard = true, config = {}, probeResult, installShell,
+export async function createHost({ working = true, bash = false, guard = true, config = {}, probeResult, installShell, workingDirectory, shellEnv,
   installRead, pluginEntry = WindowsPlugin, sandboxMode = 'read-only', presetShell, cwd = process.cwd() } = {}) {
   const ctx = new Context()
   const counts = { probes: 0, commands: 0, reads: 0 }
@@ -35,20 +36,21 @@ export async function createHost({ working = true, bash = false, guard = true, c
       const code = probe && !psProbe ? 1 : 0
       const stdout = probe ? (psProbe ? pwshMarker(spec.workdir ?? cwd) + '\r\n' : '') : fixtureLog
       return { async result() {
-        if (probe && backend.probeResult) return backend.probeResult
+        if (probe && backend.probeResult) return typeof backend.probeResult === 'function' ? backend.probeResult(spec) : backend.probeResult
         return { exitCode: code, signal: null, timedOut: false, aborted: false, timeoutMs: 5000,
           stdout: { text: stdout, truncated: false }, stderr: { text: '', truncated: false } }
       } }
     },
   }
-  ctx.provide('workingDirectory', { get: () => cwd, ensure: async () => cwd })
+  ctx.provide('workingDirectory', workingDirectory ?? { get: () => cwd, ensure: async () => cwd })
   ctx.provide('sandboxPolicy', { get defaultMode() { return policy.mode }, resolve: ({ session } = {}) =>
     session ? { ...policy, sessionId: session.id } : policy })
   if (installShell) await installShell(ctx)
   else await ctx.plugin(class FixtureShell extends Service {
     constructor(inner) { super(inner, 'shell'); Object.assign(this, shell) }
   })
-  ctx.provide('shellEnv', { collect: () => ({}) })
+  if (shellEnv) ctx.provide('shellEnv', shellEnv)
+  else await ctx.plugin(ShellEnv)
   if (presetShell) ctx.provide('agentPresets', { serviceFor: (_agent, name) => name === 'shell' ? presetShell : undefined })
   ctx.provide('agents', { list: () => agents })
   await ctx.plugin(SystemPrompt)
@@ -81,7 +83,7 @@ export async function createHost({ working = true, bash = false, guard = true, c
   }
   if (guard) await enable()
   async function addAgent(id) {
-    const agent = { id, session: { id, header: { cwd } } }
+    const agent = { id, session: { id, header: { id, cwd } } }
     const scope = createScope(owner, agent)
     agent.ctx = scope.ctx
     bindScopeParent(agent, preset)
