@@ -36,8 +36,6 @@
 2. 正常退出目标 DSH，按下方 Windows 安装说明用 dsh.cmd 安装到实际 profile。
 3. 重新打开 DSH 并新建会话，按自己的 Windows 环境核对执行器状态。
 
-> 这是私有仓库，需要使用有访问权限的 GitHub 账号查看和下载。
-
 ## 使用前了解
 
 - macOS、Linux 和 WSL 内的 Linux 版 DSH 跳过该插件；预检不会自动安装 shell 或提升权限。
