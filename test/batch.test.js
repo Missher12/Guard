@@ -52,6 +52,19 @@ test('collisions, dependent paths, binary text and match-count conflicts cannot 
   ] })).status, 'failed')
 })
 
+test('read-only sources can be copied intact but cannot be changed by text replacement', async t => {
+  const root = await workspace(t)
+  await writeFile(path.join(root, 'source.txt'), 'keep')
+  await chmod(path.join(root, 'source.txt'), 0o444)
+  const copy = await runWorker(root, { action: 'run', operations: [{ kind: 'copy', source: 'source.txt', destination: 'copy.txt' }] })
+  assert.equal(copy.status, 'completed', JSON.stringify(copy))
+  assert.equal(await readFile(path.join(root, 'copy.txt'), 'utf8'), 'keep')
+  assert.ok(!(await readdir(root)).some(name => name.startsWith('.dsh-guard-')))
+  const edit = await runWorker(root, { action: 'run', operations: [{ kind: 'replace_text', source: 'source.txt', edits: [{ oldText: 'keep', newText: 'changed', count: 1 }] }] })
+  assert.equal(edit.status, 'failed')
+  assert.equal(await readFile(path.join(root, 'source.txt'), 'utf8'), 'keep')
+})
+
 test('batch refuses symlink ancestors, cross-session resume and modified pending inputs', async t => {
   const root = await workspace(t)
   await writeFile(path.join(root, 'a'), 'A')

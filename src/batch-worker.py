@@ -186,15 +186,21 @@ def execute_item(root, row, save, runtime):
                 row["result"] = prepare_output(op, sources, temp, root, runtime)
             require([version(p) for p in inputs] == row["expected"], "源文件或替换图片在处理时发生变化，未覆盖")
             require(temp.stat().st_size <= MAX_BYTES, "输出超过 64 MiB 限制")
-            os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
-            with temp.open("rb") as stream:
+            # Windows FlushFileBuffers requires a writable handle. Flush before
+            # applying a read-only source's permissions to the prepared copy.
+            with temp.open("r+b") as stream:
                 os.fsync(stream.fileno())
+            os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
             row.update(status="uncertain", published=version(temp))
             save()
             safe_path(root, str(target))
             if row["overwrite"]:
                 require(version(target) == row["expected"][0], "原文件发生变化，未覆盖")
                 os.replace(temp, target)
+            elif os.name == "nt":
+                # Windows rename refuses an existing destination and also avoids
+                # leaving an undeletable read-only temporary hard link.
+                os.rename(temp, target)
             else:
                 os.link(temp, target)  # Exclusive publication: never replace an existing name.
         finally:
@@ -246,7 +252,9 @@ def run(payload):
             return records[0]
         return {"status": "completed", "items": records, "complete": len(records) < 20,
                 "nextOffset": request.get("offset", 0) + len(records)}
-    store.mkdir(mode=0o700, exist_ok=True)
+    # Windows 0o700 installs a user-only ACL, losing the DSH sandbox's inherited
+    # capability grant. Keep the workspace ACL there; POSIX uses owner-only bits.
+    store.mkdir(mode=0o777 if os.name == "nt" else 0o700, exist_ok=True)
     with lock_store(store):
         if request.get("action") == "resume":
             identity = request.get("id", "")

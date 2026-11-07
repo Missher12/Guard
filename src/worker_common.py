@@ -41,4 +41,3 @@ def version(path):
     require(s.st_size <= MAX_BYTES, "文件超过 64 MiB 限制")
     # JSON consumers (including the host) cannot represent nanoseconds as a JS number.
     return [str(s.st_dev), str(s.st_ino), str(s.st_size), str(s.st_mtime_ns), str(s.st_mode)]
-
