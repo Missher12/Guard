@@ -17,7 +17,7 @@ export function pwshMarker(cwd, major = 5, names = 'grep', discovery = 'closed')
 // Real Cordis scopes, official shell tools, prompt builder and dispatch
 // pipeline. Only the OS boundary and the small fixture workspace are scripted.
 export async function createHost({ working = true, bash = false, guard = true, config = {}, probeResult, installShell, workingDirectory, shellEnv,
-  installRead, pluginEntry = WindowsPlugin, sandboxMode = 'read-only', presetShell, cwd = process.cwd() } = {}) {
+  installRead, pluginEntry = WindowsPlugin, nativeEntry = false, sandboxMode = 'read-only', presetShell, cwd = process.cwd() } = {}) {
   const ctx = new Context()
   const counts = { probes: 0, commands: 0, reads: 0 }
   const backend = { working, commandError: undefined, probeResult }
@@ -76,9 +76,9 @@ export async function createHost({ working = true, bash = false, guard = true, c
   else register('read')
   let plugin
   async function enable(options = config) {
-    plugin = process.platform === 'win32' ? ctx.plugin(pluginEntry, options)
+    plugin = nativeEntry || process.platform === 'win32' ? ctx.plugin(pluginEntry, options)
       : ctx.plugin({ name: 'test-windows-host', inject: ['agents', 'tools', 'systemPrompt'],
-          apply(inner) { return mountWindowsGuard(inner, options) } })
+          apply(inner) { return mountWindowsGuard(inner, options, 'win32') } })
     await plugin
   }
   if (guard) await enable()

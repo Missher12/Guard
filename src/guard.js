@@ -26,7 +26,7 @@ function usesShellExecutor(definition) {
 function startProbe(name, env, signal, timeoutMs, previous, after) {
   const delay = Math.min(60000, previous ? previous.delay * 2 : 5000)
   const probe = { delay, retryAt: Infinity }
-  const run = () => probeShell(name, env.shell, { cwd: env.cwd, expectedCwd: env.expectedCwd, sandboxPolicy: env.policy, signal, timeoutMs })
+  const run = () => probeShell(name, env.shell, { cwd: env.cwd, expectedCwd: env.expectedCwd, sandboxPolicy: env.policy, signal, timeoutMs, platform: env.platform })
   probe.done = (after ? after.then(run) : run()).then(facts => {
     probe.ready = facts.ready
     if (facts.reason === 'timeout') probe.retryAt = performance.now() + delay
@@ -60,7 +60,7 @@ function makeRoomForDirectory(slot, now) {
 }
 
 class SessionGuard {
-  constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs) {
+  constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs, platform) {
     this.ctx = ctx
     this.agent = agent
     this.denied = denied
@@ -73,6 +73,7 @@ class SessionGuard {
     this.monitoredEnvs = monitoredEnvs
     this.cwdEpoch = 0
     this.closed = false
+    this.platform = platform
   }
 
   noteDirectory(cwd) {
@@ -116,7 +117,7 @@ class SessionGuard {
     const resolver = services.get('sandboxPolicy')
     const policy = resolver?.resolve({ session: this.agent.session })
     const available = shell && (shell.sandboxMode === undefined || policy)
-    return { shell: available ? shell : undefined, identity: available ? original(shell) : undefined, cwd, policy,
+    return { shell: available ? shell : undefined, identity: available ? original(shell) : undefined, cwd, policy, platform: this.platform,
       key: JSON.stringify([cwd, policy, shell?.pwshPath]) }
   }
 
@@ -289,7 +290,7 @@ class SessionGuard {
     const version = ps.major < 7 ? 'PS ' + ps.major + ' lacks &&/||. ' : ''
     const tools = unobserved.length ? (ps.complete ? 'Missing ' + unobserved.join('/') + '. ' : '') + 'Prefer file tools. ' : ''
     const lookup = ps.available.has('which') ? '' : 'Command lookup: Get-Command. '
-    return version + tools + lookup + 'Check [exit code: N]. Interruption can report 1.'
+    return version + tools + lookup + 'Check [exit code: N].' + (this.platform === 'win32' ? ' Interruption can report 1.' : '')
   }
 
   present(assembly, context) {
@@ -301,6 +302,14 @@ class SessionGuard {
       if (section.name === 'tool:pwsh' && section.text === stockPwshSection && this.slots.get('pwsh')?.control) {
         const text = assembly.variables[hintVariable]
         return text ? [{ ...section, text }] : []
+      }
+      const bash = this.slots.get('bash')?.facts
+      if (section.name === 'tool:bash' && this.platform === 'darwin' && bash?.ready) {
+        const missing = ['rg', 'jq'].filter(name => !bash.available.has(name))
+        const hint = ' macOS Bash ' + bash.major + '.' + bash.minor + '. Use command -v for lookup; do not assume GNU sed/date flags.' +
+          (bash.major < 4 ? ' Bash 4+ features are unavailable.' : '') +
+          (missing.length ? ' Probe did not find ' + missing.join('/') + '; prefer file tools or check availability.' : '')
+        return [{ ...section, text: section.text + hint }]
       }
       return [section]
     })
@@ -319,7 +328,7 @@ class SessionGuard {
   }
 }
 
-export function mountWindowsGuard(ctx, config = {}) {
+export function mountWindowsGuard(ctx, config = {}, platform = process.platform) {
   const denied = new Set(config.denyTools ?? [])
   if (denied.has('run_code')) throw new Error('denyTools must name capabilities; run_code is the DSH program transport.')
   const states = new Map()
@@ -332,7 +341,7 @@ export function mountWindowsGuard(ctx, config = {}) {
     try { return action() } finally { mutating = false }
   }
   function attach(agent) {
-    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000, mutate, monitoredEnvs))
+    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000, mutate, monitoredEnvs, platform))
     return states.get(agent)
   }
   function refreshLater() {
@@ -362,11 +371,11 @@ export function mountWindowsGuard(ctx, config = {}) {
   const refusal = exec => {
     const state = states.get(exec.agent)
     if (denied.has(exec.name) || state?.blocked(exec.name))
-      return exec.name + ' is disabled for this Windows session. Use another available tool.'
+      return exec.name + ' is disabled for this ' + (platform === 'darwin' ? 'macOS' : 'Windows') + ' session. Use another available tool.'
     if (shells.includes(exec.name)) {
       const current = ctx.tools.get(exec.name, exec.agent)
       if (usesShellExecutor(current) && !state?.matchesBinding(state.slots.get(exec.name), current))
-        return exec.name + ' has not passed the Windows probe.'
+        return exec.name + ' has not passed the session shell probe.'
     }
     if (exec.name === 'pwsh') {
       const slot = state?.slots.get('pwsh')

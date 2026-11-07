@@ -16,6 +16,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r test/requirements.txt
       - if: matrix.dsh == '0.2.2-rc.1'
         run: npm ci
       - name: Install the older supported test host

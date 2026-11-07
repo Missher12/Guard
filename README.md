@@ -1,109 +1,182 @@
-# dsh-windows-guard
+# dsh-windows-guard 0.4.0
 
-给原生 Windows 上的 DeepSeek Harness（DSH）用的 Cordis 插件。它在模型收到工具清单以前，通过当前会话的 DSH 执行器试运行一条只读命令。已确认无法启动或方言不匹配的标准 `pwsh` / `bash` 会被隐藏。模型沿用旧工具名时，执行守卫也会拒绝调用。已注册的 `read`、`grep`、`glob` 等工具仍可用于完成任务。
+同一个 Cordis 插件支持 **Windows 和 macOS**：验证当前 DSH shell、隐藏不可用工具、精简成功输出，并提供可靠的批量文件与办公文档操作。保留原插件名、ID 和原配置。
 
-## 在 Windows 上安装
+## 安装
 
-插件版本 **0.1.4**，支持 DSH **0.2.1-rc.4** 和 **0.2.2-rc.1**，宿主 Node.js 24.9 或更高。使用桌面版安装包不必单独安装 npm。桌面版先启动一次以初始化 profile，再完全退出 DSH。在 PowerShell 里进入安装包所在的目录，执行下面两行，然后重新打开 DSH 并新建会话。
+支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主 Office skills 配置的 LibreOffice Kit。
+
+下载或本地生成 `dsh-windows-guard-0.4.0.tgz`。先退出 DSH，再在安装包目录执行：
+
+macOS：
+
+```sh
+dsh plugin --profile desktop add ./dsh-windows-guard-0.4.0.tgz
+```
+
+Windows PowerShell：
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.1.4.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.4.0.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
-桌面版的 Windows 命令入口是 `dsh.cmd`。若 PowerShell 找不到它，请先在 DSH 桌面设置中启用命令行入口，再开一个新终端。使用 Web 版时把 `desktop` 换成 `web`，使用该安装提供的 `dsh` 命令。如果从源码安装，在项目根目录先执行 `npm.cmd pack`。卸载命令：`dsh.cmd plugin --profile desktop remove dsh-windows-guard`，然后重启。
+重新打开 DSH 并新建会话。如果找不到 `dsh` / `dsh.cmd`，先在桌面设置中启用命令行入口。Web 用户将 profile 改为 `web`。更新原实例不会迁移或删除用户设置、会话、文件及办公库。
 
-## 在你的 Windows 上验收
+## Shell 行为
 
-解压 **`dsh-windows-guard-validation-0.1.4.zip`** 后，在项目目录打开 PowerShell。从 Git 源码运行时，先用 `npm.cmd pack` 生成同目录的插件包。验收需要 Node.js 24.9+、npm 和系统的 `tar.exe`。
+- 通过当前会话实际绑定的执行器运行有超时的只读探测，继承工作目录与沙箱策略；失败工具从 Native/PTC 清单移除，旧名称也不能绕过执行守卫。
+- Windows 保留 PowerShell 方言、版本、工作目录及已确认缺失命令检查。
+- macOS 根据实际 Bash 版本给出兼容提示，提示查询命令位置及 GNU/BSD 参数差异，不假定登录 shell、Homebrew 或 PowerShell 已存在。
+- 只折叠可证明更短的成功重复输出，原始结构化 stdout/stderr 保留。原有超时退避与会话缓存继续生效。
+- Linux/WSL 中独立运行的 Linux 版 DSH 仍跳过本插件。持久终端和独立第三方执行器不冒充标准 shell 验证对象。
 
-```powershell
-npm.cmd ci
-npm.cmd test
-npm.cmd run verify:windows
+## 批量文件：`guard_file_batch`
+
+支持明确列出的普通文件：复制、同磁盘移动/重命名、UTF-8 精确替换。路径相对当前会话目录，也可传入该目录内的绝对路径。目标目录会按需创建。
+
+```json
+{
+  "action": "run",
+  "operations": [
+    { "kind": "copy", "source": "资料/说明.txt", "destination": "归档/说明.txt" },
+    { "kind": "rename", "source": "旧名称.txt", "destination": "新名称.txt" },
+    { "kind": "replace_text", "source": "记录.txt", "edits": [
+      { "oldText": "待处理", "newText": "已处理", "count": 3 }
+    ] }
+  ]
+}
 ```
 
-脚本直接加载同目录的插件安装包，打印 Windows 和 Node 版本，然后在临时目录里运行官方 DSH 的 PowerShell 和文件读取工具。它独立执行一条对照命令，分别核对本机直连、只读沙箱和工作区可写沙箱里的实际可用性；再故意配置一个不存在的程序，确认失败调用由 1 变为 0，文件仍读到 `answer=42`。若 PowerShell 可用，还会检查 80 行真实 UTF-8 日志折叠后的模型文本和未经改写的原始输出。沙箱确实无法启动会显示“不可用”，不会被报告为沙箱执行成功。全程不调用模型，不需要 API key，不改变你正在使用的 DSH profile。
+整批先检查路径、目标冲突与文本匹配数量，再串行修改。已存在的目标不覆盖。重叠、相互依赖、仅大小写/Unicode 拼写不同的目标应拆成明确的顺序批次。同一文件的多处文本修改放在一项 `edits` 中，按数组顺序匹配。二进制文件不能作为文本替换，UTF-8 BOM 和换行保持原样。
 
-可以通过 `DSH_TEST_PWSH` 指定 PowerShell 程序。Windows CI 矩阵覆盖两版受支持的 DSH 以及 PowerShell 5.1 和 7。测试使用相邻的 `project[1]` 和 `project1`，检查默认目录和单次调用的 `workdir`，并验证文件工具能正确读取无 BOM 的 UTF-8 中文内容。严格验收要求本机直连、只读沙箱和工作区可写沙箱均能实际执行。
+默认 `onError: "stop"`，失败后停止后续写入。独立项目可显式使用 `onError: "continue"`；效果不确定仍会停止。每批最多 100 项，单文件/输出最多 64 MiB，请求最多 2 MiB，宿主调用最长 120 秒。跨磁盘移动会在执行前拒绝；可先复制并核对，再单独处理源文件。
 
-## 哪些情况会被拦住
+## 办公文档：`guard_office_batch`
 
-| Windows 会话里的实际情况 | 插件行为 |
+| action | 格式与行为 |
 | --- | --- |
-| DSH 提供了 `pwsh`，但程序无法启动、被沙箱拦住、超时，或返回的方言标记不对 | 隐藏该工具及专属提示。工具请求会在原工具执行前被拒绝 |
-| PowerShell 实际进入的文件系统目录与 DSH 指定的目录不符，例如 5.1 将 `project[1]` 解析为相邻的 `project1` | 默认目录错位时隐藏 `pwsh`；单次调用指定的其他目录错位时只拒绝该调用。可以用 `read` 继续读取目标文件 |
-| Bash 已安装，但 DSH 给 `bash` 实际接上的执行器是 PowerShell | 隐藏 `bash`。只有同一个执行器能返回 Bash 专属标记才保留 |
-| PowerShell 5 执行简单命令中的 `&&` 或 `||` | 提示成功分支使用 `if ($?)`，失败分支使用 `if (-not $?)`。在 PowerShell 7 放行 |
-| PowerShell 收到以 `grep`、`rg`、`sed`、`awk`、`head`、`jq` 等开头的单行命令 | 预检子进程关闭模块自动加载。若正常命令允许从模块自动加载，未探明的名字交给 PowerShell；只有在裸命令无法自动加载模块且已确认该名字缺失时才拦截 |
-| PowerShell 探测时没看到 `which` | 在工具提示里给出原生命令查询方式 `Get-Command`。识别到标准的“找不到命令”诊断且有适用的替代命令时，在原始错误和退出码之间提示下一步。其他情况保留原文 |
-| 一个原本可用的 shell 突然报启动错误 | 用只读探测复核。如果执行器确实失效，下一轮就隐藏它。原命令只执行一次 |
-| 成功的 shell 输出含大量连续相同行或由单个回车刷新的相同进度 | 仅在可证明整段文本按指定 V4 分词器会变短时发送一行原文和重复次数。其余输出、退出信息、DSH 的原始结构化值与失败诊断保留 |
+| `inspect` | 识别 xlsx/docx/pptx/pdf，说明复杂对象或不支持的格式 |
+| `read` | Excel 指定表与行、Word 段落/表格文本、PPT 页及对象、PDF 文本与页码；按 `offset`/`limit` 分页 |
+| `edit` | Excel 单元格/字段；Word 字段、精确替换、表格单元格；PPT 字段、精确替换、图片 |
+| `merge` | Excel 按明确键合并选定数据表，或按输入顺序合并 PDF |
+| `split` | 按明确页码选择 PDF 页面，每个输出单独列出 |
+| `export_pdf` | 用宿主引擎将 xlsx/docx/pptx 转为 PDF |
+| `recalculate` | 用宿主引擎重算 xlsx 公式并检查结果 |
 
-Windows 会用 `PROGRA~1` 这样的 8.3 短路径表示长目录名。0.1.4 会在同一个 PowerShell 执行环境里核对两者是否指向同一目录，再决定是否放行。
+默认输出到会话目录的 `guard-output/`，保持原件。用每项 `output` 或顶层 `output` 指定位置，目标不能已经存在。只有用户已明确要求覆盖时才使用 `overwrite: true`；这仅覆盖源文件本身，不覆盖其他已有文件。
 
-探测继承会话工作目录和沙箱策略。结果按会话缓存，工作目录、沙箱或所选执行器发生变化时重新检查。每次探测都有超时，不调用模型，也不会自动安装 Bash、切换 shell 或申请提权。macOS、Linux 和 WSL 中独立运行的 Linux 版 DSH 会跳过整个插件。
+不同格式可以在一次 `edit` 批次中分别提供参数：
 
-仅超时会在同一环境中按需重试：首次冷却 5 秒，连续超时逐次延长至最多 60 秒，下次有活动时才重新探测。并发回合共享同一次探测。明确的沙箱拒绝保持生效，用户原命令不会被重放。
+```json
+{
+  "action": "edit",
+  "files": [
+    { "path": "统计.xlsx", "parameters": {
+      "cells": [{ "sheet": "统计", "cell": "B2", "value": 42 }]
+    } },
+    { "path": "通知.docx", "parameters": {
+      "fields": { "姓名": "张三" },
+      "tables": [{ "table": 1, "row": 2, "column": 1, "value": "已确认" }]
+    } },
+    { "path": "演示.pptx", "parameters": {
+      "fields": { "标题": "月度进展" },
+      "pictures": [{ "slide": 1, "shape": 3, "image": "新图.png" }]
+    } }
+  ]
+}
+```
 
-标准 PowerShell 在 DSH 恢复会话目录后、启动用户进程前会再次核对本次调用的验证结果。若自定义执行器无法提供这个检查点，请显式传入完整的绝对 `workdir`。第三方终端沿用自己的执行器和输出格式。
+`fields` 替换 `{{姓名}}` 这样的模板占位符，字段必须存在。`replacements` 使用 `{oldText,newText,count}`，必须符合预期匹配数量。Word 普通文本替换保留未修改 run 的格式；模板字段跨 run 时，替换内容沿用起始 run 的样式。表格、幻灯片、对象及 PDF 页码从 1 开始；读取分页 `offset` 从 0 开始，`limit` 为 1–100。
 
-每个会话绑定最多记住 32 个其他目录，同时最多探测两个。缓存满时优先替换成功记录。若只剩失败记录，每 5 秒至多替换一条已经结束、且不在冷却期内的记录。再次请求被替换的目录时，须在同一沙箱策略下重新验证成功，用户命令才会执行。探测在途或没有可替换记录时，可以先用文件工具。
+Excel 合并要求所有选定表的表头一致：
 
-## 屏蔽自己机器上的其他工具
+```json
+{
+  "action": "merge",
+  "files": [{ "path": "一组.xlsx" }, { "path": "二组.xlsx" }],
+  "output": "汇总.xlsx",
+  "parameters": { "sheet": "数据", "key": "编号", "duplicate": "error" }
+}
+```
 
-把 DSH 显示的**完整工具名**加入插件配置的 `denyTools`。例如在当前 profile 的 `cordis.patch.yml` 加入下列覆盖项。将示例名换成自己的工具名并重启。
+重复键默认报错，也可明确选择 `first` 或 `last`。合并选定表，第一本工作簿作为模板；其他工作簿的其他工作表不被合入。普通行内公式随移动行调整引用，跨行、跨表、固定行、动态引用公式及复杂表对象需要单独处理。单元格的数据类型与样式分别复制，普通文本不会因以 `=` 开头而变成公式。合并的参数和输出位置放在顶层。
+
+PDF 拆分允许同一原件产生多个明确输出：
+
+```json
+{
+  "action": "split",
+  "files": [
+    { "path": "总文档.pdf", "output": "第一部分.pdf", "parameters": { "pages": [1, 2] } },
+    { "path": "总文档.pdf", "output": "第二部分.pdf", "parameters": { "pages": [3, 4] } }
+  ]
+}
+```
+
+## 结果与续做
+
+结果必须检查 `status`、`counts` 与各项 `status`：
+
+- `completed`：本批全部完成；`skipped`：已确认内容没有变化。
+- `failed`：该项失败；`pending`：尚未处理。
+- `uncertain`：可能产生了效果，先核对目标；不会盲目重放。
+- 批次 `partial` 表示尚未完整完成，不能报告全部成功。
+
+中断、超时或响应丢失后，先用原工具查询：
+
+```json
+{ "action": "list" }
+```
+
+从结果取得 ID，再查看或继续：
+
+```json
+{ "action": "status", "id": "原批次ID" }
+```
+
+```json
+{ "action": "resume", "id": "原批次ID" }
+```
+
+`list` 每页 20 个批次，可用返回的 `nextOffset` 继续。`resume` 只能使用原会话、原目录、原工具和原操作；已完成项不重放。源文件发生变化会拒绝继续修改。未确认项只有核对到原输出才标记完成，否则保留 `uncertain` 并停止。
+
+最小执行记录存放在工作区 `.dsh-guard/`，包含路径、操作参数和逐文件状态，不复制整份源文档；替换/填充文本可能存在参数中。请把该目录加入工作区 Git 忽略。记录用于本地续做，不是防篡改保险箱；外部进程任意篡改文件或记录不在保证范围内。
+
+## 保留边界
+
+- 修改先准备完整输出、重新打开校验，再发布到目标。单文件完整写入不等于整批文件具备全有或全无的事务保证。
+- 守卫继承 DSH 权限、沙箱、取消与宿主工具限制；缺少执行器或运行时就说明原因，不自行安装软件、放宽权限或切换到无沙箱。
+- 普通复制保留文件内容与权限位；不承诺复制所有 ACL、扩展属性或资源叉。只支持普通文件，不递归处理目录，不经过符号链接/目录联接。
+- 旧 Office 格式、宏、加密、签名、嵌入对象、复杂图表与外部链接等需要适用的独立工作流，不默认覆盖。
+- 写入公式不是重算。`formulaRecalculated` 单独报告；`visualChecked: false` 表示尚未检查外观。外观修改应再用宿主 `office-render` 查看相关页面。
+- PDF 无文本页可能是扫描件或空白页，本版不执行 OCR。读取结果的 `complete`/`nextOffset` 说明当前范围是否已读完。
+- 这些保证覆盖受管批处理入口；不能仅凭提示词为任意自写 shell/Python 脚本提供相同保证。
+
+## 配置
+
+原有配置继续有效，`denyTools` 可包含两个新增工具的完整名称：
 
 ```yaml
 - id: dsh-windows-guard
   config:
-    denyTools: [my_linux_only_tool]
+    denyTools: []
     probeTimeoutMs: 5000
     compactOutput: true
 ```
 
-启动较慢时可把 `probeTimeoutMs` 调至 30000。填入未注册的工具名也有效，之后加载的同名工具会被拦截。禁用规则针对确切名称。PTC 的 `run_code` 是公共入口，应填写它调用的具体工具名。
+## 开发验证
 
-**覆盖边界。** 自动探测覆盖 DSH 的标准单次 shell 工具，包括 Standard、Cordis 和 PTC 预设继承的工具。Minimal 的持久终端、自带执行器的第三方工具，以及配置了多个隔离执行器且无法确认绑定关系的预设，可用 `denyTools` 指定。两个受支持版本的标准 Native 工具清单和 PTC 生成的 SDK 均屏蔽禁用工具，包括 agent 自身注册的同名工具；旧名称也不能绕过执行守卫。探测只能证明当时的执行器和已检查命令可用。文件锁、权限变化、用户命令自身的错误仍可能导致失败。更换同名程序或安装命令行软件后，重开会话即可刷新探测。
-
-## 实测
-
-在 DSH 0.2.2-rc.1 的真实 Cordis 注册表、提示组装器、官方 shell 工具及 Native 执行管线里，分别关闭和开启本插件，运行相同的脚本化选择策略。文件内容和 Windows 执行器响应由测试夹具提供。每个样例统计一次工具说明、工具清单和实际返回给模型的工具文本，以 DeepSeek 官方 V4 分词器计数。测试不请求模型 API。
-
-| 固定任务 | 关闭插件 | 开启插件 | 失败调用 | 开启后的本地探测 |
-| --- | ---: | ---: | ---: | ---: |
-| PowerShell 启动失败，仍需读出 `answer=42` | 868 tokens | 40 tokens | 1 → 0 | 1 |
-| 读取含 80 行相同进度的构建日志，确认 `BUILD OK` | 1,659 tokens | 858 tokens | 0 → 0 | 1 |
-| PowerShell 可用，只读短文件 | 859 tokens | 837 tokens | 0 → 0 | 1 |
-
-另在 Windows PowerShell 5.1 中实际输出 80 条用回车刷新的相同进度。单次工具返回在关闭插件和使用 0.1.2 时均为 962 个 V4 token，0.1.3 为 24 个；三次原始 stdout 的 SHA-256 相同。在 PowerShell 5.1 和 7 中运行相同的命令位置查询策略，关闭插件时先尝试 `which cmd.exe`，失败后才调用 `Get-Command cmd.exe`。开启插件后，策略从工具提示中选中 `Get-Command`，两种 shell 都只调用一次便读到同一路径。此对照使用固定选择策略。
-
-这些数值只衡量上述输入片段。完整会话还包含用户消息、历史、模型输出和缓存，实际节省量取决于工作负载。计数所用 `tokenizer.json` 的 SHA-256 为 `89085f12ef79460ac5f66d1119325ddfc694b4ab209d80bbd81d35f081dc9614`。[DeepSeek 官方分词器](https://api-docs.deepseek.com/quick_start/token_usage/)
-
-日志折叠有单独的保证：对上面指定的 V4 词表，候选文本的 UTF-8 字节数是其 token 数的上界。原文每个 token 最多覆盖 128 字节，也最多覆盖一个由 ASCII 空白分隔、且包含非不换行空格内容的片段。插件仅在原文的这两个下界之一严格大于候选上界时才改写，否则原样发送。例如四行长分隔符原本只用 9 个 token，替换说明会用 12 个，插件会保留原文。`scripts/verify_v4.py` 可对官方词表逐项重验，无需把词表装进插件。
-
-### 复现
-
-```powershell
+```sh
 npm ci
+python -m pip install -r test/requirements.txt
 npm test
-npm run bench
+npm pack
+npm run verify:macos
 ```
 
-`npm run bench` 显示调用次数、失败次数、探测次数和字符数。要复现 token 数，解压官方分词器并运行以下命令。
+`DSH_TEST_PYTHON` 可指定测试解释器，`DSH_TEST_OFFICE_CLI` 可指定已安装的官方 CLI。Mac 默认使用已安装 DSH 的运行时；Windows 的 shell 专项可运行 `npm run verify:windows`。原有 Windows CI 增加了办公测试所需的 Python 依赖。
 
-```powershell
-py -m pip install tokenizers
-py scripts/count_tokens.py 'C:\path\to\tokenizer.json'
-```
+验证使用真实临时文件和官方 DSH 工具管线，不调用模型 API。真实 OS 沙箱、Windows 专项和安装结果必须分别说明，不能用模拟执行器代替真机验收。0.1.x 的 token 对照不代表增加批处理工具后的 0.4.0，历史说明见 [Windows 0.1.4](docs/windows-0.1.4.md)。
 
-要对真实 PowerShell 和磁盘文件计数，在最后一条命令末尾加 `--native`。真实样例中的临时路径不同，数字可能略有变化。固定样例适合复核上表；本机验收适合验证实际执行环境。
-
-Windows 测试会实际启动 Windows PowerShell 5.1、PowerShell 7 和 Git Bash，要求测试机装有三者。日常使用只探测 DSH 已提供的标准 shell 工具。仓库提供 `windows-latest` 工作流。本地 macOS 可用 `DSH_TEST_PWSH` 指定 PowerShell 7 的路径来运行真实进程测试。
-
-## 参考项目
-
-- **dsh-ops** 提供原生文件工具、Windows Bash 和 PTC。这个插件借鉴它按会话治理工具的做法，可以独立安装。[T-Auto/dsh-ops](https://github.com/T-Auto/dsh-ops)
-- **Codex** 的 PowerShell 探测会实际启动候选程序。Windows 上存在 PATH 能找到程序但宿主启动失败的案例。[PowerShell 源码](https://github.com/openai/codex/blob/main/codex-rs/shell-command/src/powershell.rs) · [故障记录](https://github.com/openai/codex/issues/18937)
-- **Claude Code** 按 Git for Windows 的可用性选择 Bash 或 PowerShell。这里进一步验证 DSH 实际绑定的执行器，避免假设两个工具共享相同的 Windows 环境。[Windows 安装说明](https://code.claude.com/docs/en/setup#install-on-native-windows)
-- DSH 的工具注册表负责按 scope 限制可见工具，并在执行前应用守卫。PowerShell 的管道链运算符从 7 开始支持。[DSH 工具注册表](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/core/tools/src/index.ts) · [Microsoft PowerShell 文档](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pipeline_chain_operators)
+PDF 库的来源与许可证见 [vendor 说明](src/office/vendor/README.md)。

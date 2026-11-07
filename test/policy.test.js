@@ -42,7 +42,7 @@ test('an exit code alone, truncated data or a marker in an error cannot attest a
     { signal: 'SIGTERM' }, { sandbox: { denied: true } }, { stdout: { text: valid, truncated: true } }]) {
     assert.equal((await probeShell('pwsh', backend(valid, changes).shell, { cwd })).ready, false)
   }
-  assert.equal((await probeShell('bash', backend('DSHWIN1:bash\n').shell, {})).ready, true)
+  assert.equal((await probeShell('bash', backend('DSHWIN1:bash\n').shell, { platform: 'win32' })).ready, true)
 })
 
 test('directory proof preserves Unicode and component case, including UNC and trailing separators', async () => {

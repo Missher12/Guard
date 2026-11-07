@@ -18,6 +18,10 @@ if (process.platform !== 'win32') {
     const pluginEntry = await import(pathToFileURL(path.join(unpacked, 'package', pkg.main)).href)
     console.log('测试安装包：', bundle)
     await verify(pluginEntry)
+    execFileSync(process.execPath, ['--test', 'test/batch.test.js', 'test/office.test.js', 'test/batch-host.test.js'], {
+      cwd: root, stdio: 'inherit', env: { ...process.env, DSH_GUARD_TEST_ROOT: path.join(unpacked, 'package'),
+        DSH_GUARD_TEST_ENTRY: path.join(unpacked, 'package', pkg.main) },
+    })
   } finally { await rm(unpacked, { recursive: true, force: true, maxRetries: 3 }) }
 }
 

@@ -193,7 +193,7 @@ test('exact deny names work for late registrations, existing sessions on load, a
   assert.ok((await h.step()).tools.some(tool => tool.name === 'tool_x'))
 })
 
-test('production entry does nothing on POSIX / WSL', { skip: process.platform === 'win32' }, () => {
+test('production entry does nothing on Linux / WSL', { skip: ['win32', 'darwin'].includes(process.platform) }, () => {
   plugin.apply(new Proxy({}, { get() { throw Error('touched a host service') } }), {})
 })
 

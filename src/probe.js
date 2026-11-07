@@ -51,6 +51,8 @@ function matchesShortDirectory(short, actual) {
   return parts.length === short.parts.length && short.parts.every((value, i) => value === parts[i] || dosComponent.test(value))
 }
 const bashProbe = 'test -n "$BASH_VERSION" && printf "DSHWIN1:bash\\n"'
+const macBashProbe = 'if test -n "$BASH_VERSION"; then printf "DSHMAC1:bash:%s.%s:" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"; ' +
+  'for dsh_guard_cmd in rg jq; do if command -v "$dsh_guard_cmd" >/dev/null 2>&1; then printf "%s," "$dsh_guard_cmd"; fi; done; printf "\\n"; fi'
 const failure = reason => ({ ready: false, reason })
 
 // Keep component case: Windows also supports case-sensitive directories.
@@ -70,7 +72,7 @@ export function sameDirectory(first, second) {
 }
 
 /** Fixed, read-only commands. Never start our own process or loosen a sandbox. */
-export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxPolicy, signal, timeoutMs = 5000 }) {
+export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxPolicy, signal, timeoutMs = 5000, platform = process.platform }) {
   if (!shell) return failure('no-executor')
   const deadline = AbortSignal.timeout(timeoutMs)
   const control = signal ? AbortSignal.any([signal, deadline]) : deadline
@@ -82,7 +84,7 @@ export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxP
     // usual small limit elsewhere and cap alias output at a Win32 path's length.
     const pathLimit = short ? 32767 : expectedCwd?.length ?? 0
     const spec = shell.resolve({
-      command: name === 'pwsh' ? pwshProbe(short) : bashProbe, workdir: cwd,
+      command: name === 'pwsh' ? pwshProbe(short) : platform === 'darwin' ? macBashProbe : bashProbe, workdir: cwd,
       sandboxPolicy, timeoutMs, onExpiry: 'kill', signal: control, stdoutMaxBytes: Math.max(2048, 4 * pathLimit + 256),
     })
     // An executor can stall before it returns its handle, or in result().
@@ -101,7 +103,12 @@ export async function probeShell(name, shell, { cwd, expectedCwd = cwd, sandboxP
     if (!result || result.exitCode !== 0 || result.signal || result.aborted ||
         result.stdout?.truncated || result.sandbox?.runnerFailed) return failure('executor')
     const text = result.stdout.text.trim()
-    if (name === 'bash') return text === 'DSHWIN1:bash' ? { ready: true } : failure('dialect')
+    if (name === 'bash') {
+      if (platform !== 'darwin') return text === 'DSHWIN1:bash' ? { ready: true } : failure('dialect')
+      const marker = /^DSHMAC1:bash:([1-9]\d?)\.(\d{1,2}):((?:(?:rg|jq),)*)$/.exec(text)
+      return marker ? { ready: true, major: Number(marker[1]), minor: Number(marker[2]),
+        available: new Set(marker[3].split(',').filter(Boolean)) } : failure('dialect')
+    }
     const marker = /^DSHWIN1:([1-9]\d?):([a-z,]*):(open|closed):((?:[a-f0-9]{4})*)(:short)?$/i.exec(text)
     if (!marker || (marker[5] && !short)) return failure('dialect')
     const actual = Buffer.from(marker[4], 'hex').swap16().toString('utf16le')
