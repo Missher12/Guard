@@ -8,7 +8,7 @@
 
 **Spec:** 本文依据本次已确认范围：原插件同时支持 Windows 和 Mac；文件整理与办公文档两类都需要；先保证批量修改可靠。已按用户后续授权直接实施至 0.4.0；以下保留阶段划分并记录最终实现。
 
-执行方式：当前会话自行实施；遵守用户禁止主动创建子代理的规则。交付源码与可安装包，不自动提交、推送、发布或修改日常 DSH profile。
+执行方式：当前会话自行实施；遵守用户禁止主动创建子代理的规则。已获得用户后续明确授权：安装到日常 DSH、保留配置、同步 GitHub 并发布 0.4.0。
 
 ## 已核实的基础
 
@@ -111,7 +111,9 @@ guard_office_batch({ files, action, parameters, output }) -> BatchResult
 - 文件批处理与办公专项 14 项通过，包含真实子进程中断、续做不重复、冲突/只读/链接检查、改后输入拒绝、四种格式与原件保留。
 - 当前 Intel Mac 已使用实际 DSH Bash 执行器与 OS 沙箱；DSH 0.2.1-rc.4 兼容集成检查 44 项通过、1 项按平台跳过，0 失败。
 - 使用本机官方 LibreOffice Kit 完成真实 Word 转 PDF、Excel 重算，以及修改后的 Word/PPT 页面渲染与人工图像检查。样例中文、混合样式、表格与替换图片显示正常；不代表所有文档视觉保真。
-- Windows 和 Apple Silicon 未做本轮真机验证。保留 Windows 专项并补充已有 CI 的 Python 依赖与包内批处理检查；未推送，因此没有新 CI 结果。
+- Windows Server runner 已通过两个 DSH 版本 × PowerShell 5/7 的四组完整 CI，包含原生 shell、批处理、办公测试和打包验收：[运行记录](https://github.com/Missher12/dsh-windows-guard/actions/runs/42401589662)。Apple Silicon 尚未真机验证。
 - 全量 `node --test test/*.test.js`：81 项，72 通过、9 项按平台跳过、0 失败；`git diff --check` 与两个验收脚本语法检查通过。
-- `npm pack` 生成 `dsh-windows-guard-0.4.0.tgz`，15 个文件，429,525 字节，包含 Python worker、Office 适配器、pypdf wheel 与许可证。
-- `node scripts/verify-macos.js` 从该安装包解压后运行 Mac、批处理、办公和宿主集成用例：29 项全部通过，0 跳过。此结果是包内验证，未安装进日常 DSH profile。
+- `npm pack` 生成 `dsh-windows-guard-0.4.0.tgz`，15 个文件，包含 Python worker、Office 适配器、pypdf wheel 与许可证。
+- 初轮包内 29 项全部通过。Windows CI 随后发现临时文件刷盘句柄与沙箱 ACL 继承问题，已修复并补充只读复制测试；相关 Mac 源码测试 20 项全部通过。
+- 最终包内检查 30 项中 29 项通过、真实重算一项遇到引擎超时，工具如实返回未完成；该项从同一安装包隔离复测后通过。
+- 最终包经宿主插件管理接口安装到日常 desktop profile，报告 applied；配置文件、其他依赖、组合包顺序保持原样，安装后的 worker 与发布源码一致。
