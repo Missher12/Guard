@@ -2,6 +2,8 @@
 
 <h1>DSH Windows Guard · Windows 执行守卫</h1>
 
+<p><img src="../docs/images/overview.svg" alt="Windows Guard 功能示意" width="100%"></p>
+
 <p>先确认当前 Windows shell 能用，再把可用工具交给模型。</p>
 
 <p>
@@ -14,6 +16,10 @@
 </div>
 
 ---
+
+<!-- current-source -->
+当前开发源码：**0.1.4** · [分支 `main`](https://github.com/Missher12/dsh-windows-guard/tree/main)。安装包以实际 Release 为准。
+<!-- /current-source -->
 
 ## 功能一览
 
