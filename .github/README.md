@@ -11,7 +11,7 @@
   <a href="https://github.com/Missher12/dsh-windows-guard"><img src="https://img.shields.io/badge/%E6%96%87%E6%A1%A3-%E4%B8%AD%E6%96%87-4D6BFE?style=flat-square" alt="文档: 中文"></a>
 </p>
 
-<p><a href="#功能一览">功能一览</a> · <a href="#快速开始">快速开始</a> · <a href="#详细文档">详细文档</a></p>
+<p><a href="#功能一览">功能一览</a> · <a href="#快速开始">快速开始</a> · <a href="#使用场景">使用场景</a> · <a href="#常见问题">常见问题</a> · <a href="#详细文档">详细文档</a></p>
 
 </div>
 
@@ -42,6 +42,67 @@
 
 - 支持 Windows 和 macOS；Linux 与 WSL 内独立运行的 Linux 版 DSH 会跳过该插件。
 - 批处理需要宿主提供 subprocess、沙箱与工作区依赖；预检不会自动安装 shell 或提升权限。
+
+
+<!-- readme-expansion -->
+## 使用场景
+
+| 遇到的情况 | 怎样使用 |
+| --- | --- |
+| 命令在 Windows 和 macOS 上经常因为方言不同而失败 | 先使用当前会话真实绑定的执行器做只读预检，再选择可用工具。 |
+| 需要复制、重命名或精确替换一批明确文件 | 整批检查路径、冲突与匹配数量，再按顺序执行文件操作。 |
+| 想在一个任务中处理表格、文稿、演示文档和 PDF | 按宿主能力读取、编辑、合并、拆分、导出 PDF 或重算公式，默认保留原件。 |
+
+## 第一次使用
+
+1. 安装后新建会话，确认系统、实际 shell、工作目录与宿主依赖。
+2. 给出明确输入文件、操作规则和输出目录，让 Agent 按规则预检。
+3. 完成后检查逐项结果、输出文件和失败原因；文档转换或公式重算还需核对实际内容。
+
+### 一个具体例子
+
+“把当前项目中我列出的 3 个文本文件复制到归档目录，并按给出的名称重命名。先检查源文件、目标冲突和工作目录；已有目标不要覆盖，完成后列出逐项结果。”
+
+办公任务也应写清工作表、单元格、页码或要替换的准确文字，避免用模糊范围修改文件。
+
+## 常见问题
+
+<details>
+<summary>名字叫 Windows Guard，macOS 也能用吗？</summary>
+
+0.4.0 同时支持 Windows 与 macOS，保留原插件名称。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
+
+</details>
+
+<details>
+<summary>发现缺少 shell 或 Office 能力，会自动安装或提权吗？</summary>
+
+不会。插件依据当前执行器与宿主依赖判断可用能力，不自动安装 shell，也不自行扩大权限。
+
+</details>
+
+<details>
+<summary>一批操作中途失败，会自动撤销前面的修改吗？</summary>
+
+不要按这个假设使用。默认失败后停止后续写入；应根据逐项回执核对已完成操作和剩余项，预检也不等于整批事务回滚。
+
+</details>
+
+<details>
+<summary>办公文件会直接覆盖原件吗？</summary>
+
+默认输出到单独的 guard-output 或指定位置并保留原件。只有明确要求覆盖时才使用对应选项，现有目标冲突仍需处理。
+
+</details>
+
+## 搭配使用
+
+配合 [Project Ops](https://github.com/Missher12/Missher-DSH-Project-Ops) 预览和定位输出文件，配合 [Focus](https://github.com/Missher12/Missher-DSH-Focus) 核对任务结果；执行权限仍由宿主决定。
+
+## 升级与数据
+
+升级原插件实例，不迁移或清空个人文件和配置。格式转换、复杂对象与公式结果受宿主 Office 运行时及格式支持影响，输出仍应按用途检查。
+<!-- /readme-expansion -->
 
 ## 详细文档
 
