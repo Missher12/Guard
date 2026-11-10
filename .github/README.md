@@ -1,14 +1,14 @@
 <div align="center">
 
-<h1>DSH Windows Guard · Windows/macOS 执行守卫</h1>
+<h1>Guard · Windows/macOS 执行守卫</h1>
 
-<p><img src="../docs/images/overview.svg" alt="Windows Shell 预检功能示意，0.4.0 新增 macOS 与批处理支持" width="100%"></p>
+<p><img src="../docs/images/overview.svg" alt="Guard 功能示意：Windows/macOS Shell 预检与批处理支持" width="100%"></p>
 
 <p>核对当前会话的 shell，可靠地处理文件与办公文档。</p>
 
 <p>
-  <a href="https://github.com/Missher12/dsh-windows-guard/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/Release-0.4.0-4D6BFE?style=flat-square" alt="Release: 0.4.0"></a>
-  <a href="https://github.com/Missher12/dsh-windows-guard"><img src="https://img.shields.io/badge/%E6%96%87%E6%A1%A3-%E4%B8%AD%E6%96%87-4D6BFE?style=flat-square" alt="文档: 中文"></a>
+  <a href="https://github.com/Missher12/Guard/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/Release-0.4.0-4D6BFE?style=flat-square" alt="Release: 0.4.0"></a>
+  <a href="https://github.com/Missher12/Guard"><img src="https://img.shields.io/badge/%E6%96%87%E6%A1%A3-%E4%B8%AD%E6%96%87-4D6BFE?style=flat-square" alt="文档: 中文"></a>
 </p>
 
 <p><a href="#功能一览">功能一览</a> · <a href="#快速开始">快速开始</a> · <a href="#使用场景">使用场景</a> · <a href="#常见问题">常见问题</a> · <a href="#详细文档">详细文档</a></p>
@@ -18,7 +18,7 @@
 ---
 
 <!-- current-source -->
-当前源码与安装包：**0.4.0** · [分支 `main`](https://github.com/Missher12/dsh-windows-guard/tree/main) · [Release 与安装包](https://github.com/Missher12/dsh-windows-guard/releases/tag/v0.4.0)。
+当前源码与安装包：**0.4.0** · [分支 `main`](https://github.com/Missher12/Guard/tree/main) · [Release 与安装包](https://github.com/Missher12/Guard/releases/tag/v0.4.0)。
 <!-- /current-source -->
 
 ## 功能一览
@@ -68,9 +68,9 @@
 ## 常见问题
 
 <details>
-<summary>名字叫 Windows Guard，macOS 也能用吗？</summary>
+<summary>Guard 支持哪些系统？</summary>
 
-0.4.0 同时支持 Windows 与 macOS，保留原插件名称。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
+0.4.0 同时支持 Windows 与 macOS；安装标识仍为 `dsh-windows-guard`，已有配置继续使用。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
 
 </details>
 
