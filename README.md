@@ -1,5 +1,7 @@
 # Guard 0.4.0
 
+![Guard · 执行守卫（品牌插画）](docs/images/cover-v2.png)
+
 同一个 Cordis 插件支持 **Windows 和 macOS**：验证当前 DSH shell、隐藏不可用工具、精简成功输出，并提供可靠的批量文件与办公文档操作。安装标识仍为 `dsh-windows-guard`，原 ID 和配置继续使用。
 
 ## 安装

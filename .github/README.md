@@ -2,7 +2,7 @@
 
 <h1>Guard · Windows/macOS 执行守卫</h1>
 
-<p><img src="../docs/images/overview.svg" alt="Guard 功能示意：Windows/macOS Shell 预检与批处理支持" width="100%"></p>
+<p><img src="../docs/images/cover-v2.png" alt="Guard · 执行守卫（品牌插画）" width="100%"></p>
 
 <p>核对当前会话的 shell，可靠地处理文件与办公文档。</p>
 
