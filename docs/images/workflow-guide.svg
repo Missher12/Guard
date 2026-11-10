@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title description">
+<title id="title">Guard · 使用流程</title>
+<desc id="description">检查执行器，当前 shell 与平台，不假定另一台机器能力；预检目录，确认路径、依赖与目标，已有冲突不直接覆盖；依序执行，明确列出的文件批次，失败与部分完成保留；核对回执，逐项结果与产物路径，未解决项清楚列出</desc>
+<defs><linearGradient id="background" x2="1" y2="1"><stop stop-color="#faf8f5"/><stop offset="1" stop-color="#f3f0fa"/></linearGradient></defs>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;fill:#272433}.title{font-size:42px;font-weight:650}.subtitle{font-size:23px;fill:#6c6678}.step{font-size:27px;font-weight:600}.body{font-size:21px;fill:#625d6d}.number{font-size:22px;font-weight:600;fill:#746294}.label{font-size:19px;fill:#827790}.group{font-size:28px;font-weight:600}.item{font-size:25px;fill:#474252}</style>
+<rect width="1200" height="470" rx="24" fill="url(#background)"/>
+
+<text x="44" y="69" class="title" >Guard · 使用流程</text>
+<text x="44" y="111" class="subtitle" >操作示意 · 从入口到结果，按当前任务选择需要的步骤</text>
+<rect x="44" y="158" width="257" height="230" rx="18" fill="#fff" stroke="#e0dae9"/>
+<circle cx="80" cy="197" r="19" fill="#eee8f7"/>
+<text x="80" y="205" class="number" text-anchor="middle">01</text>
+<text x="68" y="258" class="step" >检查执行器</text>
+<text x="68" y="306" class="body" >当前 shell 与平台</text>
+<text x="68" y="343" class="body" >不假定另一台机器能力</text>
+<path d="M308 270h13m-6-6 6 6-6 6" stroke="#a396b7" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="329" y="158" width="257" height="230" rx="18" fill="#fff" stroke="#e0dae9"/>
+<circle cx="365" cy="197" r="19" fill="#eee8f7"/>
+<text x="365" y="205" class="number" text-anchor="middle">02</text>
+<text x="353" y="258" class="step" >预检目录</text>
+<text x="353" y="306" class="body" >确认路径、依赖与目标</text>
+<text x="353" y="343" class="body" >已有冲突不直接覆盖</text>
+<path d="M593 270h13m-6-6 6 6-6 6" stroke="#a396b7" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="614" y="158" width="257" height="230" rx="18" fill="#fff" stroke="#e0dae9"/>
+<circle cx="650" cy="197" r="19" fill="#eee8f7"/>
+<text x="650" y="205" class="number" text-anchor="middle">03</text>
+<text x="638" y="258" class="step" >依序执行</text>
+<text x="638" y="306" class="body" >明确列出的文件批次</text>
+<text x="638" y="343" class="body" >失败与部分完成保留</text>
+<path d="M878 270h13m-6-6 6 6-6 6" stroke="#a396b7" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="899" y="158" width="257" height="230" rx="18" fill="#fff" stroke="#e0dae9"/>
+<circle cx="935" cy="197" r="19" fill="#eee8f7"/>
+<text x="935" y="205" class="number" text-anchor="middle">04</text>
+<text x="923" y="258" class="step" >核对回执</text>
+<text x="923" y="306" class="body" >逐项结果与产物路径</text>
+<text x="923" y="343" class="body" >未解决项清楚列出</text>
+<text x="44" y="435" class="label" >图解说明流程，不代表界面截图；完整步骤与注意事项见下方正文。</text>
+</svg>
