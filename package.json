@@ -1,8 +1,8 @@
 {
   "name": "dsh-windows-guard",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "DSH Windows/macOS shell 守卫、可靠批量文件与办公文档处理",
+  "description": "DSH Windows/macOS 效率守卫：精简 Token、过滤不可用工具、减少重复失败",
   "type": "module",
   "main": "./src/index.js",
   "exports": {

@@ -42,3 +42,14 @@ test('leave failed and rejected progress output intact', () => {
   assert.equal(compactShellResult('pwsh', { ...result, isError: true }, accept), accept)
   assert.equal(compactShellResult('pwsh', { ...result, value: { ...result.value, exitCode: 1 } }, accept), accept)
 })
+
+test('fold repeated multiline log blocks while retaining every distinct line and exact repetition count', () => {
+  const block = '编译 compile source files\r\n检查 check assets and references\r\n'
+  const body = 'START\r\n' + block.repeat(80) + 'warning: review optional asset\r\nBUILD OK\r\n[exit code: 0]'
+  const result = shellResult(body)
+  const folded = compactShellResult('bash', result, accept)
+  assert.match(folded.content?.[0].text ?? '', /previous 2 lines repeated 79 more times/)
+  assert.ok(folded.content[0].text.includes(block))
+  assert.ok(folded.content[0].text.endsWith('warning: review optional asset\r\nBUILD OK\r\n[exit code: 0]'))
+  assert.equal(result.value.stdout.text, body)
+})

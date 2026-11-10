@@ -1,25 +1,34 @@
-# Guard 0.4.0
+# Guard 0.5.0
 
 ![Guard · 执行守卫（品牌插画）](docs/images/cover-v2.png)
 
-同一个 Cordis 插件支持 **Windows 和 macOS**：验证当前 DSH shell、隐藏不可用工具、精简成功输出，并提供可靠的批量文件与办公文档操作。安装标识仍为 `dsh-windows-guard`，原 ID 和配置继续使用。
+同一个 Cordis 插件支持 **Windows 和 macOS**，目标是减少 Token、减少不可用工具调用、提高效率、减少执行轨迹中的实际失败。通过当前会话的 Shell 验证、工具可用性过滤和成功输出精简实现；批量文件与办公工具用于合并零碎调用。安装标识仍为 `dsh-windows-guard`，原 ID 和配置继续使用。
+
+## 0.5.0 效率升级
+
+- **调用前过滤**：缺少或禁用 `load_workspace_dependencies` 时，两个批处理工具从模型清单隐藏，依赖恢复后重新提供。新版宿主的 `when` 可用性条件继续生效；Native 与 PTC 使用相同过滤结果。
+- **断连避让**：MCP 工具返回明确的 `Not connected` / `MCP error -32000: Connection closed` / `MCP error -32000: Not connected` 时，当前 Agent 暂时隐藏该工具 30 秒；再次断连逐次加倍，最多 5 分钟。冷却结束只恢复候选，不发起请求。连接重新注册、工作目录或沙箱环境变化会清除旧判断；卸载守卫立即恢复。
+- **成功输出精简**：重复日志支持 1–8 行的连续重复块，保留所有不同内容与重复次数。完全成功且校验结果一致的批次，回执保留总数、按原顺序排列的全部目标路径、共同校验结果，以及完整状态查询参数；原始结构化结果继续完整保留。
+- **失败如实呈现**：普通参数错误、业务错误、超时、权限拒绝不触发 MCP 冷却；失败与部分完成回执不压缩。不会自动重放调用、安装依赖、卸载插件或扩大权限。
+
+没有通用健康状态接口的第三方插件仍按宿主原行为运行；本版不会推测其依赖或登录状态。断连可能在首次真实调用后才被发现，不能保证轨迹从不报错。
 
 ## 安装
 
 支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主 Office skills 配置的 LibreOffice Kit。
 
-下载或本地生成 `dsh-windows-guard-0.4.0.tgz`。先退出 DSH，再在安装包目录执行：
+优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.5.0.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
 
 macOS：
 
 ```sh
-dsh plugin --profile desktop add ./dsh-windows-guard-0.4.0.tgz
+dsh plugin --profile desktop add ./dsh-windows-guard-0.5.0.tgz
 ```
 
 Windows PowerShell：
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.4.0.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.5.0.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
@@ -125,6 +134,8 @@ PDF 拆分允许同一原件产生多个明确输出：
 - `uncertain`：可能产生了效果，先核对目标；不会盲目重放。
 - 批次 `partial` 表示尚未完整完成，不能报告全部成功。
 
+至少 8 项、全部完成且每项校验结果一致时，较短的模型回执使用 `targets` 数组代替重复的 `items` 对象，数组位置仍对应原操作索引；共同的 Office 校验结果位于 `result`。`details` 给出同一工具的完整查询参数。`action=status`、读取、检查、失败或部分完成时仍返回完整结果。`compactOutput: false` 可关闭两类输出精简。
+
 中断、超时或响应丢失后，先用原工具查询：
 
 ```json
@@ -173,12 +184,13 @@ PDF 拆分允许同一原件产生多个明确输出：
 npm ci
 python -m pip install -r test/requirements.txt
 npm test
+npm run bench
 npm pack
 npm run verify:macos
 ```
 
 `DSH_TEST_PYTHON` 可指定测试解释器，`DSH_TEST_OFFICE_CLI` 可指定已安装的官方 CLI。Mac 默认使用已安装 DSH 的运行时；Windows 的 shell 专项可运行 `npm run verify:windows`。原有 Windows CI 增加了办公测试所需的 Python 依赖。
 
-验证使用真实临时文件和官方 DSH 工具管线，不调用模型 API。真实 OS 沙箱、Windows 专项和安装结果必须分别说明，不能用模拟执行器代替真机验收。0.1.x 的 token 对照不代表增加批处理工具后的 0.4.0，历史说明见 [Windows 0.1.4](docs/windows-0.1.4.md)。
+验证使用真实临时文件和官方 DSH 工具管线，不调用模型 API。真实 OS 沙箱、Windows 专项和安装结果必须分别说明，不能用模拟执行器代替真机验收。`bench` 对相同固定任务比较启用/关闭守卫后的工具输入、结果长度、调用与失败次数；MCP 用确定的断连诊断模拟传输失败。字符数不等于 Token，可用 `scripts/count_tokens.py` 和指定版本的 [DeepSeek 官方分词器](https://api-docs.deepseek.com/quick_start/token_usage/) 复现计数。历史说明见 [Windows 0.1.4](docs/windows-0.1.4.md)。
 
 PDF 库的来源与许可证见 [vendor 说明](src/office/vendor/README.md)。
