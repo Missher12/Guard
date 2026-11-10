@@ -4,10 +4,10 @@
 
 <p><img src="../docs/images/overview.svg" alt="Guard 功能示意：Windows/macOS Shell 预检与批处理支持" width="100%"></p>
 
-<p>核对当前会话的 shell，可靠地处理文件与办公文档。</p>
+<p>减少 Token 与不可用工具调用，提高 Windows/macOS 工作效率，减少重复失败。</p>
 
 <p>
-  <a href="https://github.com/Missher12/Guard/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/Release-0.4.0-4D6BFE?style=flat-square" alt="Release: 0.4.0"></a>
+  <a href="https://github.com/Missher12/Guard/releases/tag/v0.5.0"><img src="https://img.shields.io/badge/Release-0.5.0-4D6BFE?style=flat-square" alt="Release: 0.5.0"></a>
   <a href="https://github.com/Missher12/Guard"><img src="https://img.shields.io/badge/%E6%96%87%E6%A1%A3-%E4%B8%AD%E6%96%87-4D6BFE?style=flat-square" alt="文档: 中文"></a>
 </p>
 
@@ -18,7 +18,7 @@
 ---
 
 <!-- current-source -->
-当前源码与安装包：**0.4.0** · [分支 `main`](https://github.com/Missher12/Guard/tree/main) · [Release 与安装包](https://github.com/Missher12/Guard/releases/tag/v0.4.0)。
+当前源码与安装包：**0.5.0** · [分支 `main`](https://github.com/Missher12/Guard/tree/main) · [Release 与安装包](https://github.com/Missher12/Guard/releases/tag/v0.5.0)。
 <!-- /current-source -->
 
 ## 功能一览
@@ -27,8 +27,10 @@
 | --- | --- |
 | **只读预检** | 在 Windows/macOS 通过当前会话执行器核对 PowerShell 或 Bash。 |
 | **工具守卫** | 隐藏已确认不可用的工具，并拒绝沿用旧名称的调用。 |
+| **断连避让** | MCP 明确断连后暂时移出候选，避免反复调用；连接更新或冷却结束后恢复，不自动重放。 |
+| **依赖过滤** | 缺少可用工作区运行时时，隐藏依赖它的批处理工具。 |
 | **目录核对** | 检查执行器实际目录，避免相邻目录与路径方言错误。 |
-| **输出精简** | 满足已证明的边界时折叠重复日志，保留原始输出与退出信息。 |
+| **输出精简** | 折叠重复多行日志，精简一致成功的批次回执，保留原始结果和完整状态查询。 |
 | **文件批处理** | 预检整批路径、目标冲突与匹配数量，再串行复制、移动、重命名或精确替换文本。 |
 | **办公文档** | 读取和编辑 Excel、Word、PPT，合并与拆分 PDF；转换和公式重算使用宿主 Office 运行时。 |
 
@@ -70,7 +72,7 @@
 <details>
 <summary>Guard 支持哪些系统？</summary>
 
-0.4.0 同时支持 Windows 与 macOS；安装标识仍为 `dsh-windows-guard`，已有配置继续使用。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
+0.5.0 同时支持 Windows 与 macOS；安装标识仍为 `dsh-windows-guard`，已有配置继续使用。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
 
 </details>
 

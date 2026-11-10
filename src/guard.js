@@ -4,6 +4,8 @@ import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import * as toolApi from '@deepseek-ai/dsh-tools'
 import { directoryKey, probeShell, incompatibleCommand, sameDirectory, suggestMissingCommand } from './probe.js'
 import { compactShellResult } from './compact.js'
+import { disconnectedMcp } from './availability.js'
+import { batchDependency } from './batch.js'
 
 const shells = ['bash', 'pwsh']
 const hintVariable = 'dsh_windows_guard_pwsh_hint'
@@ -70,6 +72,9 @@ class SessionGuard {
     this.local = new Map()
     this.slots = new Map()
     this.receipts = new WeakMap()
+    this.capabilityCalls = new WeakMap()
+    this.cooldowns = new Map()
+    this.capabilityMasks = new Set()
     this.monitoredEnvs = monitoredEnvs
     this.cwdEpoch = 0
     this.closed = false
@@ -121,8 +126,84 @@ class SessionGuard {
       key: JSON.stringify([cwd, policy, shell?.pwshPath]) }
   }
 
+  capabilityBinding(name) {
+    return this.ctx.tools.get(name, this.agent) ?? this.ctx.tools.get(name, scopeParentOf(this.agent))
+  }
+
+  capabilityKey() {
+    try {
+      const services = this.agent.ctx
+      const service = name => services.get('agentPresets')?.serviceFor?.(this.agent, name) ?? services.get(name)
+      return JSON.stringify([service('workingDirectory')?.get(this.agent.session),
+        service('sandboxPolicy')?.resolve({ session: this.agent.session })])
+    } catch { return undefined }
+  }
+
+  cooldownReason(name) {
+    const record = this.cooldowns.get(name)
+    if (!record) return
+    if (record.definition !== this.capabilityBinding(name) || record.key !== this.capabilityKey()) {
+      this.cooldowns.delete(name)
+      return
+    }
+    if (performance.now() < record.until)
+      return name + ' connection unavailable; temporarily hidden. Reconnect or use another available tool.'
+  }
+
+  dependencyReason(name, toolSet) {
+    // This runs for every advertised name. Do not rebuild registry views for
+    // unrelated tools just to discover they have no guard-owned dependency.
+    if (name !== 'guard_file_batch' && name !== 'guard_office_batch') return
+    const dependency = batchDependency(this.capabilityBinding(name))
+    if (dependency && (this.denied.has(dependency) || !this.ctx.tools.get(dependency, this.agent) ||
+        (toolSet && !toolSet.view(this.agent).has(dependency))))
+      return name + ' needs the available ' + dependency + ' tool.'
+  }
+
+  refreshCapabilities() {
+    // Modern admission is captured before prompt assembly. Dynamic restrictions
+    // would strand a recovered tool outside that captured set for another turn;
+    // filter this step's presentation instead and keep dispatch guarded below.
+    if (typeof this.ctx.tools.resolve === 'function') return
+    const names = new Set([...this.cooldowns.keys(), ...this.capabilityMasks,
+      'guard_file_batch', 'guard_office_batch'])
+    for (const name of names) {
+      if (this.denied.has(name)) continue
+      const reason = this.cooldownReason(name) ?? this.dependencyReason(name)
+      this.mask(name, this.capabilityBinding(name), !!reason)
+      if (reason) this.capabilityMasks.add(name)
+      else this.capabilityMasks.delete(name)
+    }
+  }
+
+  noteCall(exec) {
+    if (!exec.name.startsWith('mcp__')) return
+    const definition = this.capabilityBinding(exec.name)
+    if (definition) this.capabilityCalls.set(exec, { definition, key: this.capabilityKey() })
+  }
+
+  noteResult(exec, result) {
+    const binding = this.capabilityCalls.get(exec)
+    this.capabilityCalls.delete(exec)
+    if (!binding || exec.signal.aborted || binding.definition !== this.capabilityBinding(exec.name) ||
+        binding.key !== this.capabilityKey()) return
+    if (!result.isError) this.cooldowns.delete(exec.name)
+    else if (disconnectedMcp(exec.name, result)) {
+      const previous = this.cooldowns.get(exec.name)
+      const delay = Math.min(300000, previous ? previous.delay * 2 : 30000)
+      // Bound per-agent bookkeeping. Eviction only forgets an optimization.
+      if (!previous && this.cooldowns.size >= 64) {
+        const oldest = this.cooldowns.keys().next().value
+        this.cooldowns.delete(oldest)
+      }
+      this.cooldowns.set(exec.name, { ...binding, delay, until: performance.now() + delay })
+    }
+    this.refreshCapabilities()
+  }
+
   refresh() {
     if (this.closed) return
+    this.refreshCapabilities()
     const jobs = []
     const tools = this.ctx.tools
     const parent = scopeParentOf(this.agent)
@@ -214,9 +295,10 @@ class SessionGuard {
       return 'This PowerShell provider requires a fully qualified workdir. Use the absolute workspace path or a file tool.'
   }
 
-  blocked(name) {
+  blocked(name, toolSet) {
     const slot = this.slots.get(name)
-    return this.denied.has(name) || (slot && !slot.independent && !slot.facts?.ready)
+    return this.denied.has(name) || !!this.cooldownReason(name) || !!this.dependencyReason(name, toolSet) ||
+      (slot && !slot.independent && !slot.facts?.ready)
   }
 
   matchesBinding(slot, definition) {
@@ -236,7 +318,7 @@ class SessionGuard {
     const selected = context.toolSet
     const view = scope => selected ? selected.view(scope) : new Map(
       this.ctx.tools.definitions(scope).map(tool => [tool.name, tool]))
-    const hidden = new Set([...view(this.agent).keys()].filter(name => this.blocked(name)))
+    const hidden = new Set([...view(this.agent).keys()].filter(name => this.blocked(name, selected)))
     if (hidden.size === 0) return
     const filtered = { view: scope => {
       const result = new Map(view(scope))
@@ -296,7 +378,7 @@ class SessionGuard {
   present(assembly, context) {
     const sections = assembly.sections.flatMap(section => {
       if (section.name === 'tools:sdk') return [{ ...section, text: this.legacySdk(section.text) }]
-      if (section.name.startsWith('tool:') && this.denied.has(section.name.slice(5))) return []
+      if (section.name.startsWith('tool:') && this.blocked(section.name.slice(5), context.toolSet)) return []
       if (shells.some(name => section.name === 'tool:' + name && (this.blocked(name) ||
           (context.toolSet && !context.toolSet.view(this.agent).has(name))))) return []
       if (section.name === 'tool:pwsh' && section.text === stockPwshSection && this.slots.get('pwsh')?.control) {
@@ -316,7 +398,7 @@ class SessionGuard {
     // On 0.2.2 the provider owns schemas. Both versions apply the registry
     // mask before assembly. 0.2.1 also exposes its final native schema list.
     return { ...assembly, sections, ...(Array.isArray(assembly.tools)
-      ? { tools: assembly.tools.filter(tool => !this.blocked(tool.name)) } : {}) }
+      ? { tools: assembly.tools.filter(tool => !this.blocked(tool.name, context.toolSet)) } : {}) }
   }
 
   async close() {
@@ -370,6 +452,8 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
   })
   const refusal = exec => {
     const state = states.get(exec.agent)
+    const capabilityReason = state?.cooldownReason(exec.name) ?? state?.dependencyReason(exec.name, exec.toolSet)
+    if (capabilityReason) return capabilityReason
     if (denied.has(exec.name) || state?.blocked(exec.name))
       return exec.name + ' is disabled for this ' + (platform === 'darwin' ? 'macOS' : 'Windows') + ' session. Use another available tool.'
     if (shells.includes(exec.name)) {
@@ -384,6 +468,8 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
   }
   ctx.on('tools/pre-execute', async (exec, next) => {
     const state = states.get(exec.agent)
+    state?.refreshCapabilities()
+    state?.noteCall(exec)
     if (shells.includes(exec.name)) await state?.refresh()
     if (exec.name === 'pwsh') await state?.checkWorkdir(exec)
     const reason = refusal(exec)
@@ -425,8 +511,10 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
   })
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const decision = await next()
-    if (decision.kind !== 'accept' || !shells.includes(exec.name)) return decision
+    if (decision.kind !== 'accept') return decision
     const state = states.get(exec.agent)
+    state?.noteResult(exec, result)
+    if (!shells.includes(exec.name)) return decision
     const slot = state?.slots.get(exec.name)
     if (!slot?.control || slot.definition !== ctx.tools.get(exec.name, exec.agent)) return decision
     await state.recheckLaunchError(exec, result)

@@ -5,14 +5,26 @@ function foldLines(text) {
   const pieces = []
   for (let start = 0; start < lines.length;) {
     const line = lines[start]
-    let end = start + 1
-    while (lines[end] === line) end++
-    const extra = end - start - 1
-    const eol = line.endsWith('\r\n') ? '\r\n' : line.slice(-1)
-    const marker = '[previous line repeated ' + extra + ' more times]' + eol
-    pieces.push(extra >= 3 && extra * line.length > marker.length + 24
-      ? line + marker : line.repeat(end - start))
-    start = end
+    let folded = false
+    // Small repeated blocks cover build/install loops without removing changing
+    // progress, warnings or unique diagnostics. Work is bounded by eight lines.
+    for (let width = 1; width <= 8 && start + 4 * width <= lines.length; width++) {
+      let end = start + width
+      blocks: for (; end + width <= lines.length; end += width)
+        for (let offset = 0; offset < width; offset++)
+          if (lines[start + offset] !== lines[end + offset]) break blocks
+      const copies = (end - start) / width
+      if (copies < 4) continue
+      const block = lines.slice(start, start + width).join('')
+      const eol = block.endsWith('\r\n') ? '\r\n' : block.slice(-1)
+      const marker = '[previous ' + (width === 1 ? 'line' : width + ' lines') + ' repeated ' + (copies - 1) + ' more times]' + eol
+      if ((copies - 1) * block.length <= marker.length + 24) continue
+      pieces.push(block + marker)
+      start += copies * width
+      folded = true
+      break
+    }
+    if (!folded) { pieces.push(line); start++ }
   }
   const candidate = pieces.join('')
   if (candidate === text || !text.isWellFormed()) return text
@@ -44,4 +56,23 @@ export function compactShellResult(name, result, decision) {
     return { ...block, text }
   })
   return changed ? { ...decision, content } : decision
+}
+
+/** Compact only uniform, fully successful write receipts, never reads/errors.
+ * Canonical values and status queries retain all per-item detail. */
+export function renderBatchResult(args, value, enabled = true) {
+  const original = JSON.stringify(value)
+  const full = () => [{ type: 'text', text: original }]
+  if (!enabled || ['read', 'inspect', 'list', 'status'].includes(args.action) || value?.status !== 'completed' ||
+      typeof value.id !== 'string' || !Array.isArray(value.items) || value.items.length < 8 ||
+      value.counts?.completed !== value.items.length ||
+      ['failed', 'pending', 'uncertain', 'skipped'].some(key => value.counts[key] !== 0)) return full()
+  const common = JSON.stringify(value.items[0].result)
+  if (!value.items.every((item, index) => item.index === index && item.status === 'completed' &&
+      typeof item.target === 'string' && JSON.stringify(item.result) === common &&
+      Object.keys(item).every(key => ['index', 'status', 'target', 'result'].includes(key)))) return full()
+  const { items, ...summary } = value
+  const text = JSON.stringify({ ...summary, targets: items.map(item => item.target),
+    ...(common === undefined ? {} : { result: items[0].result }), details: { action: 'status', id: value.id } })
+  return text.length < original.length * 0.75 ? [{ type: 'text', text }] : full()
 }

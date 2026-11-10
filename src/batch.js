@@ -1,4 +1,8 @@
 import { createWorkerRunner } from './runtime.js'
+import { renderBatchResult } from './compact.js'
+
+const batchRunners = new WeakSet()
+export const batchDependency = definition => batchRunners.has(definition?.execute) ? 'load_workspace_dependencies' : undefined
 
 const text = { type: 'string' }
 const replacement = { type: 'object', required: ['oldText', 'newText', 'count'], additionalProperties: false,
@@ -17,14 +21,16 @@ const parameters = { type: 'object', properties: {
   offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
 }, additionalProperties: false }
 
-export function mountBatchTools(ctx) {
+export function mountBatchTools(ctx, config = {}) {
   ctx.inject(['subprocess', 'workingDirectory', 'sandboxPolicy'], inner => {
     const run = createWorkerRunner(inner)
     const output = { schema: { type: 'object', additionalProperties: true },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }
+      render: (args, value) => renderBatchResult(args, value, config.compactOutput !== false) }
     function register(name, description, properties, family) {
+      const execute = (args, exec) => run(exec, family, args)
+      batchRunners.add(execute)
       inner.tools.register({ name, description, parameters: { type: 'object', required: ['action'], additionalProperties: false, properties },
-        output, execute: (args, exec) => run(exec, family, args),
+        output, execute,
         presentCall: args => ({ card: 'generic', title: family === 'files' ? '批量处理文件' : '批量处理办公文档',
           kind: ['read', 'inspect', 'list', 'status'].includes(args.action) ? 'read' : 'edit', rawInput: args }),
       })
