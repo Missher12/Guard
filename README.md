@@ -1,4 +1,4 @@
-# Guard 0.5.1
+# Guard 0.5.2
 
 ![Guard · 执行守卫（品牌插画）](docs/images/cover-v2.png)
 
@@ -7,7 +7,7 @@
 ## 0.5.0 效率升级
 
 - **调用前过滤**：缺少或禁用 `load_workspace_dependencies` 时，两个批处理工具从模型清单隐藏，依赖恢复后重新提供。新版宿主的 `when` 可用性条件继续生效；Native 与 PTC 使用相同过滤结果。
-- **断连避让**：MCP 工具返回明确的 `Not connected` / `MCP error -32000: Connection closed` / `MCP error -32000: Not connected` 时，当前 Agent 暂时隐藏该工具 30 秒；再次断连逐次加倍，最多 5 分钟。冷却结束只恢复候选，不发起请求。连接重新注册、工作目录或沙箱环境变化会清除旧判断；卸载守卫立即恢复。
+- **断连避让**：MCP 工具返回明确的 `Not connected` / `MCP error -32000: Connection closed` / `MCP error -32000: Not connected`，或 rc.3 的 `Error: MCP connection closed`、`SdkError: Error: MCP connection closed`、`Error: Not connected` 时，当前 Agent 暂时隐藏该工具 30 秒；再次断连逐次加倍，最多 5 分钟。冷却结束只恢复候选，不发起请求。连接重新注册、工作目录或沙箱环境变化会清除旧判断；卸载守卫立即恢复。
 - **成功输出精简**：重复日志支持 1–8 行的连续重复块，保留所有不同内容与重复次数。完全成功且校验结果一致的批次，回执保留总数、按原顺序排列的全部目标路径、共同校验结果，以及完整状态查询参数；原始结构化结果继续完整保留。
 - **失败如实呈现**：普通参数错误、业务错误、超时、权限拒绝不触发 MCP 冷却；失败与部分完成回执不压缩。不会自动重放调用、安装依赖、卸载插件或扩大权限。
 
@@ -17,18 +17,18 @@
 
 支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1 / 0.2.2-rc.3**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主 Office skills 配置的 LibreOffice Kit。
 
-优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.5.1.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
+优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.5.2.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
 
 macOS：
 
 ```sh
-dsh plugin --profile desktop add ./dsh-windows-guard-0.5.1.tgz
+dsh plugin --profile desktop add ./dsh-windows-guard-0.5.2.tgz
 ```
 
 Windows PowerShell：
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.5.1.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.5.2.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 

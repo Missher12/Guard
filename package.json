@@ -1,6 +1,6 @@
 {
   "name": "dsh-windows-guard",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "DSH Windows/macOS 效率守卫：精简 Token、过滤不可用工具、减少重复失败",
   "type": "module",

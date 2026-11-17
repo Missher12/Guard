@@ -28,17 +28,24 @@ async function disconnectedHost(t, options = {}) {
 }
 
 test('a disconnected MCP tool disappears before the next Native/PTC selection; errors remain errors', async t => {
-  const h = await disconnectedHost(t)
-  const failed = await h.call('mcp__files__lookup')
-  assert.equal(failed.isError, true)
-  assert.match(text(failed), /Not connected/)
-  assert.equal(visible(await h.step(), 'mcp__files__lookup'), false)
-  assert.equal(visible(await h.step(), 'read'), true)
-  const stale = await h.call('mcp__files__lookup')
-  assert.equal(stale.isError, true)
-  assert.equal(h.calls(), 1, 'a stale call must not reach the disconnected transport again')
-  await h.usePtc()
-  assert.doesNotMatch((await h.step()).sections.find(s => s.name === 'tools:sdk').text, /mcp__files__lookup/)
+  for (const message of ['Not connected', 'MCP error -32000: Connection closed', 'MCP error -32000: Not connected',
+    'Error: MCP connection closed', 'SdkError: Error: MCP connection closed', 'Error: Not connected']) {
+    await t.test(message, async t => {
+      const h = await disconnectedHost(t)
+      h.error(message)
+      const failed = await h.call('mcp__files__lookup')
+      assert.equal(failed.isError, true)
+      assert.equal(failed.error.message, message)
+      assert.ok(text(failed).includes(message))
+      assert.equal(visible(await h.step(), 'mcp__files__lookup'), false)
+      assert.equal(visible(await h.step(), 'read'), true)
+      const stale = await h.call('mcp__files__lookup')
+      assert.equal(stale.isError, true)
+      assert.equal(h.calls(), 1, 'a stale call must not reach the disconnected transport again')
+      await h.usePtc()
+      assert.doesNotMatch((await h.step()).sections.find(s => s.name === 'tools:sdk').text, /mcp__files__lookup/)
+    })
+  }
 })
 
 test('connection cooldown backs off on demand and success recovers without any automatic replay', async t => {
@@ -76,14 +83,17 @@ test('a new connection registration and a different agent do not inherit a stale
 test('ordinary MCP errors, cancellation and another plugin with similar prose never disable a tool', async t => {
   const h = await disconnectedHost(t)
   for (const message of ['File not found', 'Permission denied', 'Invalid arguments', 'Request timed out',
-    'Document says: Not connected', 'Operation cancelled']) {
+    'Document says: Not connected', 'Operation cancelled', 'Error: Request timed out', 'SdkError: Permission denied',
+    'Error: Connection closed', 'Error: MCP connection closed while saving document',
+    'SdkError: Error: MCP connection closed; retry later', 'Error: Not connected to database',
+    'Document says: Error: Not connected', 'MCP error -32001: Connection closed']) {
     h.error(message)
     assert.equal((await h.call('mcp__files__lookup')).isError, true)
     assert.equal(visible(await h.step(), 'mcp__files__lookup'), true, message)
   }
   h.agent.ctx.tools.register({ name: 'local_lookup', description: 'Local lookup', parameters: { type: 'object' },
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
-    async execute() { throw Error('Not connected') } })
+    async execute() { throw Error('SdkError: Error: MCP connection closed') } })
   await h.call('local_lookup')
   assert.equal(visible(await h.step(), 'local_lookup'), true)
 })
