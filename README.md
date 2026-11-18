@@ -1,4 +1,4 @@
-# Guard 0.6.0
+# Guard 0.6.1
 
 ![Guard · 执行守卫（品牌插画）](docs/images/cover-v2.png)
 
@@ -16,20 +16,20 @@
 
 ## 安装
 
-支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1 / 0.2.2-rc.3 / 0.2.2-rc.4**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主启用的 LibreOffice Kit；旧版宿主可通过 Office 技能提供引擎路径。
+支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1 / 0.2.2-rc.3 / 0.2.2-rc.4 / 0.2.2-rc.5**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主启用的 LibreOffice Kit；旧版宿主可通过 Office 技能提供引擎路径。
 
-优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.6.0.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
+优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.6.1.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
 
 macOS：
 
 ```sh
-dsh plugin --profile desktop add ./dsh-windows-guard-0.6.0.tgz
+dsh plugin --profile desktop add ./dsh-windows-guard-0.6.1.tgz
 ```
 
 Windows PowerShell：
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.6.0.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.6.1.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
