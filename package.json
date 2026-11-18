@@ -1,6 +1,6 @@
 {
   "name": "dsh-windows-guard",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "private": true,
   "description": "DSH Windows/macOS 效率守卫：精简 Token、过滤不可用工具、减少重复失败",
   "type": "module",
@@ -34,12 +34,16 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
+    "@deepseek-ai/dsh-mcp-client": "0.2.2-rc.3 || 0.2.2-rc.4",
     "@deepseek-ai/dsh-scope": "0.2.1-rc.4 || 0.2.2-rc.1 || 0.2.2-rc.3 || 0.2.2-rc.4",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.4 || 0.2.2-rc.1 || 0.2.2-rc.3 || 0.2.2-rc.4",
     "@deepseek-ai/schemastery": "~3.18.5 || ~3.19.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-mcp-client": {
       "optional": true
     },
     "@deepseek-ai/dsh-scope": {

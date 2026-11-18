@@ -2,32 +2,15 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import BashSandbox from '@deepseek-ai/dsh-bash-sandbox'
-import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import Sandbox from '@deepseek-ai/dsh-sandbox-local'
-import { createHost } from './host.js'
+import { execute, openBatchFixture } from './batch-fixture.js'
 import { python, workspace } from './worker.js'
 
 const supported = ['win32', 'darwin'].includes(process.platform)
-const execute = promisify(execFile)
 const pluginEntry = process.env.DSH_GUARD_TEST_ENTRY ? await import(pathToFileURL(process.env.DSH_GUARD_TEST_ENTRY).href) : await import('../src/index.js')
 async function host(t, root, mode, config = {}) {
-  const h = await createHost({ cwd: root, bash: true, nativeEntry: true, sandboxMode: mode, config, pluginEntry,
-    async installShell(ctx) {
-      await ctx.plugin(Subprocess)
-      await ctx.plugin(Sandbox)
-      await ctx.plugin(BashSandbox)
-    },
-  })
+  const h = await openBatchFixture(root, { mode, config, pluginEntry })
   t.after(h.close)
-  const executable = (await execute(python, ['-c', 'import sys; print(sys.executable)'])).stdout.trim()
-  h.ctx.tools.register({ name: 'load_workspace_dependencies', description: 'Test runtime path query',
-    parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-    execute: async () => ({ python: executable }),
-  })
   return h
 }
 
@@ -43,6 +26,22 @@ test('registered batch tool executes through actual DSH workspace-write confinem
   assert.equal(status.value.counts.completed, 1)
   const outside = await h.call('guard_file_batch', { action: 'run', operations: [{ kind: 'copy', source: 'a.txt', destination: '../escape.txt' }] })
   assert.equal(outside.value.status, 'failed')
+})
+
+test('the registered shared replacement accepts explicit files and keeps the DSH write boundary', { skip: !supported }, async t => {
+  const root = await workspace(t)
+  const files = ['甲.txt', '乙.txt']
+  for (const file of files) await writeFile(path.join(root, file), '\ufeffpending\r\n')
+  const request = { action: 'run', files, edits: [{ oldText: 'pending', newText: 'complete', count: 1 }] }
+  const blocked = await host(t, root, 'read-only')
+  assert.equal((await blocked.call('guard_file_batch', request)).isError, true)
+  assert.equal(await readFile(path.join(root, files[0]), 'utf8'), '\ufeffpending\r\n')
+  const h = await host(t, root, 'workspace-write')
+  const result = await h.call('guard_file_batch', request)
+  assert.equal(result.isError, false, JSON.stringify(result.content))
+  assert.equal(result.value.status, 'completed', JSON.stringify(result.value))
+  for (const file of files) assert.equal(await readFile(path.join(root, file), 'utf8'), '\ufeffcomplete\r\n')
+  assert.equal((await h.call('guard_file_batch', { action: 'resume', id: result.value.id })).value.counts.completed, 2)
 })
 
 test('Office tool resolves the host skill runtime and resumes conversion through the DSH pipeline', { skip: process.platform !== 'darwin' }, async t => {

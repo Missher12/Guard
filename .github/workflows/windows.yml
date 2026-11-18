@@ -8,8 +8,12 @@ jobs:
       matrix:
         dsh: ['0.2.1-rc.4', '0.2.2-rc.1']
         shell: [powershell.exe, pwsh.exe]
+        include:
+          - dsh: '0.2.2-rc.4'
+            shell: pwsh.exe
     env:
       DSH_TEST_PWSH: ${{ matrix.shell }}
+      DSH_REQUIRE_MCP_STATUS: ${{ matrix.dsh == '0.2.2-rc.4' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,20 +26,26 @@ jobs:
       - run: python -m pip install -r test/requirements.txt
       - if: matrix.dsh == '0.2.2-rc.1'
         run: npm ci
-      - name: Install the older supported test host
-        if: matrix.dsh == '0.2.1-rc.4'
+      - name: Install the selected official test host
+        if: matrix.dsh != '0.2.2-rc.1'
         shell: pwsh
         run: |
           $original = Get-Content package.json -Raw
-          $deps = @{ '@deepseek-ai/cordis' = '4.0.5'; '@deepseek-ai/schemastery' = '3.18.5' }
+          $version = '${{ matrix.dsh }}'
+          $legacy = $version -eq '0.2.1-rc.4'
+          $deps = if ($legacy) {
+            @{ '@deepseek-ai/cordis' = '4.0.5'; '@deepseek-ai/schemastery' = '3.18.5' }
+          } else {
+            @{ '@deepseek-ai/cordis' = '4.1.0'; '@deepseek-ai/schemastery' = '3.19.0'; '@deepseek-ai/dsh-mcp-client' = $version }
+          }
           foreach ($name in ($original | ConvertFrom-Json).devDependencies.PSObject.Properties.Name) {
-            if ($name -like '@deepseek-ai/dsh-*' -and $name -notlike '*tool-executor-*') { $deps[$name] = '0.2.1-rc.4' }
+            if ($name -like '@deepseek-ai/dsh-*' -and (-not $legacy -or $name -notlike '*tool-executor-*')) { $deps[$name] = $version }
           }
           try {
             @{ name = 'guard-test-host'; private = $true; devDependencies = $deps } |
               ConvertTo-Json -Depth 4 | Set-Content package.json -Encoding utf8NoBOM
             npm.cmd install --ignore-scripts --package-lock=false --no-audit --no-fund
-            if ($LASTEXITCODE) { throw "Legacy host installation failed ($LASTEXITCODE)" }
+            if ($LASTEXITCODE) { throw "Official test host installation failed ($LASTEXITCODE)" }
           } finally { [IO.File]::WriteAllText((Join-Path $PWD 'package.json'), $original) }
       - name: Check the actual DSH version
         run: node -e "if (require('./node_modules/@deepseek-ai/dsh-tools/package.json').version !== '${{ matrix.dsh }}') process.exit(1)"
@@ -43,3 +53,26 @@ jobs:
       - run: npm run bench
       - run: npm pack
       - run: npm run verify:windows -- --strict
+      - name: Compare with the published Guard 0.5.3 on Windows
+        if: matrix.dsh == '0.2.2-rc.4'
+        shell: pwsh
+        run: |
+          $baseline = Join-Path $env:RUNNER_TEMP 'guard-053'
+          $archive = Join-Path $env:RUNNER_TEMP 'dsh-windows-guard-0.5.3.tgz'
+          Invoke-WebRequest -Uri 'https://github.com/Missher12/Guard/releases/download/v0.5.3/dsh-windows-guard-0.5.3.tgz' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd7437ec26624796b7b5e67ab0baaa290a671f65fb82f79231220383341de67fd') {
+            throw 'Unexpected Guard 0.5.3 release archive'
+          }
+          New-Item -ItemType Directory -Path $baseline | Out-Null
+          tar.exe -xzf $archive -C $baseline --strip-components=1
+          if ($LASTEXITCODE) { throw 'Could not extract the Guard 0.5.3 archive' }
+          $env:DSH_HOME = Join-Path $env:RUNNER_TEMP 'guard-compare-home'
+          $env:DSH_TELEMETRY_DISABLED = '1'
+          node scripts/compare-versions.js $baseline (Join-Path $env:RUNNER_TEMP 'guard-comparison-windows.json')
+          if ($LASTEXITCODE) { throw 'Guard version comparison failed' }
+      - uses: actions/upload-artifact@v4
+        if: matrix.dsh == '0.2.2-rc.4'
+        with:
+          name: guard-comparison-windows
+          path: ${{ runner.temp }}/guard-comparison-windows.json
+          if-no-files-found: error

@@ -58,21 +58,35 @@ export function compactShellResult(name, result, decision) {
   return changed ? { ...decision, content } : decision
 }
 
-/** Compact only uniform, fully successful write receipts, never reads/errors.
- * Canonical values and status queries retain all per-item detail. */
+/** Compact model-facing write receipts. Explicit status and canonical values
+ * retain every item, including the successful work in a partial batch. */
 export function renderBatchResult(args, value, enabled = true) {
   const original = JSON.stringify(value)
   const full = () => [{ type: 'text', text: original }]
-  if (!enabled || ['read', 'inspect', 'list', 'status'].includes(args.action) || value?.status !== 'completed' ||
-      typeof value.id !== 'string' || !Array.isArray(value.items) || value.items.length < 8 ||
+  if (!enabled || ['read', 'inspect', 'list', 'status'].includes(args.action) ||
+      typeof value?.id !== 'string' || !Array.isArray(value.items) || value.items.length < 8) return full()
+  const { items, ...summary } = value
+  const details = { action: 'status', id: value.id }
+  if (value.status === 'partial') {
+    const counts = { completed: 0, skipped: 0, failed: 0, pending: 0, uncertain: 0 }
+    for (const [index, item] of items.entries()) {
+      if (item?.index !== index || typeof item.target !== 'string' || !Object.hasOwn(counts, item.status)) return full()
+      counts[item.status]++
+    }
+    const exceptions = items.filter(item => item.status !== 'completed' && item.status !== 'skipped')
+    if (!exceptions.length || Object.keys(counts).some(key => counts[key] !== value.counts?.[key])) return full()
+    const text = JSON.stringify({ ...summary, exceptions, details,
+      ...(counts.uncertain === 0 ? { resumeAfterFix: { action: 'resume', id: value.id } } : {}) })
+    return text.length < original.length * 0.75 ? [{ type: 'text', text }] : full()
+  }
+  if (value.status !== 'completed' ||
       value.counts?.completed !== value.items.length ||
       ['failed', 'pending', 'uncertain', 'skipped'].some(key => value.counts[key] !== 0)) return full()
   const common = JSON.stringify(value.items[0].result)
   if (!value.items.every((item, index) => item.index === index && item.status === 'completed' &&
       typeof item.target === 'string' && JSON.stringify(item.result) === common &&
       Object.keys(item).every(key => ['index', 'status', 'target', 'result'].includes(key)))) return full()
-  const { items, ...summary } = value
   const text = JSON.stringify({ ...summary, targets: items.map(item => item.target),
-    ...(common === undefined ? {} : { result: items[0].result }), details: { action: 'status', id: value.id } })
+    ...(common === undefined ? {} : { result: items[0].result }), details })
   return text.length < original.length * 0.75 ? [{ type: 'text', text }] : full()
 }

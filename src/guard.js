@@ -4,7 +4,7 @@ import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import * as toolApi from '@deepseek-ai/dsh-tools'
 import { directoryKey, probeShell, incompatibleCommand, sameDirectory, suggestMissingCommand } from './probe.js'
 import { compactShellResult } from './compact.js'
-import { disconnectedMcp } from './availability.js'
+import { disconnectedMcp, watchMcpConnections } from './availability.js'
 import { batchDependency } from './batch.js'
 
 const shells = ['bash', 'pwsh']
@@ -62,7 +62,7 @@ function makeRoomForDirectory(slot, now) {
 }
 
 class SessionGuard {
-  constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs, platform) {
+  constructor(ctx, agent, denied, timeoutMs, mutate, monitoredEnvs, platform, mcpUnavailable) {
     this.ctx = ctx
     this.agent = agent
     this.denied = denied
@@ -76,6 +76,7 @@ class SessionGuard {
     this.cooldowns = new Map()
     this.capabilityMasks = new Set()
     this.monitoredEnvs = monitoredEnvs
+    this.mcpUnavailable = mcpUnavailable
     this.cwdEpoch = 0
     this.closed = false
     this.platform = platform
@@ -139,15 +140,18 @@ class SessionGuard {
     } catch { return undefined }
   }
 
-  cooldownReason(name) {
+  mcpReason(name, definition) {
+    if (!name.startsWith('mcp__')) return
+    definition ??= this.capabilityBinding(name)
+    const reason = name + ' connection unavailable; temporarily hidden. Reconnect or use another available tool.'
+    if (this.mcpUnavailable(definition)) return reason
     const record = this.cooldowns.get(name)
     if (!record) return
-    if (record.definition !== this.capabilityBinding(name) || record.key !== this.capabilityKey()) {
+    if (record.definition !== definition || record.key !== this.capabilityKey()) {
       this.cooldowns.delete(name)
       return
     }
-    if (performance.now() < record.until)
-      return name + ' connection unavailable; temporarily hidden. Reconnect or use another available tool.'
+    if (performance.now() < record.until) return reason
   }
 
   dependencyReason(name, toolSet) {
@@ -169,7 +173,7 @@ class SessionGuard {
       'guard_file_batch', 'guard_office_batch'])
     for (const name of names) {
       if (this.denied.has(name)) continue
-      const reason = this.cooldownReason(name) ?? this.dependencyReason(name)
+      const reason = this.mcpReason(name) ?? this.dependencyReason(name)
       this.mask(name, this.capabilityBinding(name), !!reason)
       if (reason) this.capabilityMasks.add(name)
       else this.capabilityMasks.delete(name)
@@ -295,9 +299,9 @@ class SessionGuard {
       return 'This PowerShell provider requires a fully qualified workdir. Use the absolute workspace path or a file tool.'
   }
 
-  blocked(name, toolSet) {
+  blocked(name, toolSet, definition) {
     const slot = this.slots.get(name)
-    return this.denied.has(name) || !!this.cooldownReason(name) || !!this.dependencyReason(name, toolSet) ||
+    return this.denied.has(name) || !!this.mcpReason(name, definition) || !!this.dependencyReason(name, toolSet) ||
       (slot && !slot.independent && !slot.facts?.ready)
   }
 
@@ -318,7 +322,8 @@ class SessionGuard {
     const selected = context.toolSet
     const view = scope => selected ? selected.view(scope) : new Map(
       this.ctx.tools.definitions(scope).map(tool => [tool.name, tool]))
-    const hidden = new Set([...view(this.agent).keys()].filter(name => this.blocked(name, selected)))
+    const hidden = new Set()
+    for (const [name, definition] of view(this.agent)) if (this.blocked(name, selected, definition)) hidden.add(name)
     if (hidden.size === 0) return
     const filtered = { view: scope => {
       const result = new Map(view(scope))
@@ -376,9 +381,13 @@ class SessionGuard {
   }
 
   present(assembly, context) {
+    const definitions = context.toolSet?.view(this.agent)
     const sections = assembly.sections.flatMap(section => {
       if (section.name === 'tools:sdk') return [{ ...section, text: this.legacySdk(section.text) }]
-      if (section.name.startsWith('tool:') && this.blocked(section.name.slice(5), context.toolSet)) return []
+      if (section.name.startsWith('tool:')) {
+        const name = section.name.slice(5)
+        if (this.blocked(name, context.toolSet, definitions?.get(name))) return []
+      }
       if (shells.some(name => section.name === 'tool:' + name && (this.blocked(name) ||
           (context.toolSet && !context.toolSet.view(this.agent).has(name))))) return []
       if (section.name === 'tool:pwsh' && section.text === stockPwshSection && this.slots.get('pwsh')?.control) {
@@ -398,7 +407,7 @@ class SessionGuard {
     // On 0.2.2 the provider owns schemas. Both versions apply the registry
     // mask before assembly. 0.2.1 also exposes its final native schema list.
     return { ...assembly, sections, ...(Array.isArray(assembly.tools)
-      ? { tools: assembly.tools.filter(tool => !this.blocked(tool.name, context.toolSet)) } : {}) }
+      ? { tools: assembly.tools.filter(tool => !this.blocked(tool.name, context.toolSet, definitions?.get(tool.name))) } : {}) }
   }
 
   async close() {
@@ -413,6 +422,7 @@ class SessionGuard {
 export function mountWindowsGuard(ctx, config = {}, platform = process.platform) {
   const denied = new Set(config.denyTools ?? [])
   if (denied.has('run_code')) throw new Error('denyTools must name capabilities; run_code is the DSH program transport.')
+  let mcpUnavailable = () => false
   const states = new Map()
   const monitoredEnvs = new WeakSet()
   let closed = false
@@ -423,7 +433,8 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
     try { return action() } finally { mutating = false }
   }
   function attach(agent) {
-    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000, mutate, monitoredEnvs, platform))
+    if (!states.has(agent)) states.set(agent, new SessionGuard(ctx, agent, denied, config.probeTimeoutMs ?? 5000,
+      mutate, monitoredEnvs, platform, definition => mcpUnavailable(definition)))
     return states.get(agent)
   }
   function refreshLater() {
@@ -452,9 +463,10 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
   })
   const refusal = exec => {
     const state = states.get(exec.agent)
-    const capabilityReason = state?.cooldownReason(exec.name) ?? state?.dependencyReason(exec.name, exec.toolSet)
+    const offered = exec.name.startsWith('mcp__') ? exec.toolSet?.view(exec.agent).get(exec.name) : undefined
+    const capabilityReason = state?.mcpReason(exec.name, offered) ?? state?.dependencyReason(exec.name, exec.toolSet)
     if (capabilityReason) return capabilityReason
-    if (denied.has(exec.name) || state?.blocked(exec.name))
+    if (denied.has(exec.name) || state?.blocked(exec.name, exec.toolSet, offered))
       return exec.name + ' is disabled for this ' + (platform === 'darwin' ? 'macOS' : 'Windows') + ' session. Use another available tool.'
     if (shells.includes(exec.name)) {
       const current = ctx.tools.get(exec.name, exec.agent)
@@ -529,5 +541,7 @@ export function mountWindowsGuard(ctx, config = {}, platform = process.platform)
     states.clear()
     await Promise.all(active.map(state => state.close()))
   }, 'dsh-windows-guard: release session masks')
-  return Promise.all(ctx.agents.list().map(agent => attach(agent).refresh())).then(() => undefined)
+  // Register the shell and agent hooks before the optional SDK import yields.
+  const mcp = watchMcpConnections(ctx).then(monitor => { mcpUnavailable = monitor })
+  return Promise.all([mcp, ...ctx.agents.list().map(agent => attach(agent).refresh())]).then(() => undefined)
 }

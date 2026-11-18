@@ -7,6 +7,7 @@ export const batchDependency = definition => batchRunners.has(definition?.execut
 const text = { type: 'string' }
 const replacement = { type: 'object', required: ['oldText', 'newText', 'count'], additionalProperties: false,
   properties: { oldText: text, newText: text, count: { type: 'integer', minimum: 1 } } }
+const edits = { type: 'array', minItems: 1, maxItems: 100, items: replacement }
 const parameters = { type: 'object', properties: {
   fields: { type: 'object', additionalProperties: { type: 'string' }, description: 'Replace {{field}} placeholders.' },
   replacements: { type: 'array', items: replacement },
@@ -36,15 +37,17 @@ export function mountBatchTools(ctx, config = {}) {
       })
     }
     register('guard_file_batch', 'Process explicit regular files in the session directory: copy, move, rename or exact UTF-8 replacement. ' +
-      'All items are checked before edits; new destinations never overwrite and replace_text updates the source only. Stop on failure. Inspect status/counts/items; partial is not success. ' +
+      'For a shared replacement pass explicit files and edits once, without operations. ' +
+      'All items are checked before edits; new destinations never overwrite and replace_text updates the source only. Stop on failure. Check status, counts and exceptions; partial is not success. ' +
       'After interruption use list/status then resume by id; never replay completed or uncertain operations. Uses DSH permissions and bundled runtime.', {
       action: { type: 'string', enum: ['run', 'resume', 'list', 'status'] }, id: text,
       offset: { type: 'integer', minimum: 0, description: 'Batch list pagination offset.' },
       onError: { type: 'string', enum: ['stop', 'continue'], default: 'stop' },
+      files: { type: 'array', minItems: 1, maxItems: 100, items: text }, edits,
       operations: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object',
         required: ['kind', 'source'], additionalProperties: false, properties: {
           kind: { type: 'string', enum: ['copy', 'move', 'rename', 'replace_text'] }, source: text, destination: text,
-          edits: { type: 'array', items: replacement },
+          edits,
         } } },
     }, 'files')
     register('guard_office_batch', 'Read, inspect or batch edit xlsx/docx/pptx/pdf using DSH Office libraries. ' +
@@ -52,7 +55,7 @@ export function mountBatchTools(ctx, config = {}) {
       'merge supports xlsx (sheet,key,duplicate) or PDF. split selects PDF pages into each explicit output. ' +
       'export_pdf and recalculate use the installed Office engine. Outputs default to guard-output; overwrite requires explicit true and user intent. ' +
       'Formula writing is not recalculation; successful saving is not visual inspection. Follow Office skills for appearance checks. ' +
-      'Check each result; list/status/resume recover batches without replaying completed work.', {
+      'Share the same parameters across files at the top level. Check status, counts and exceptions; list/status/resume recover batches without replaying completed work.', {
       action: { type: 'string', enum: ['inspect', 'read', 'edit', 'merge', 'split', 'export_pdf', 'recalculate', 'resume', 'list', 'status'] },
       id: text, output: text, overwrite: { type: 'boolean', default: false }, parameters,
       offset: { type: 'integer', minimum: 0, description: 'Batch list pagination offset.' },

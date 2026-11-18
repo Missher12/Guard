@@ -29,6 +29,73 @@ test('batch copies, renames and replaces complete UTF-8 files, preserving BOM an
   assert.equal(await readFile(path.join(root, 'c.txt'), 'utf8'), 'new new')
 })
 
+test('shared replacement checks every explicit path before writing and preserves text bytes', async t => {
+  const root = await workspace(t)
+  const files = ['一号 [1].txt', '二号.txt']
+  const edits = [{ oldText: 'old', newText: 'new', count: 1 }]
+  await writeFile(path.join(root, files[0]), '\ufeffold\r\n')
+  await writeFile(path.join(root, files[1]), 'old old\n')
+  const args = { action: 'run', files, edits }
+  const rejected = await runWorker(root, args)
+  assert.equal(rejected.status, 'failed')
+  assert.equal(rejected.id, null)
+  assert.equal(rejected.items[1].target, files[1])
+  assert.match(rejected.items[1].error, /匹配数量不符/)
+  assert.equal(await readFile(path.join(root, files[0]), 'utf8'), '\ufeffold\r\n')
+  await writeFile(path.join(root, files[1]), 'old\n')
+  for (const request of [
+    { ...args, operations: [{ kind: 'replace_text', source: files[0], edits }] },
+    { ...args, files: [files[0], files[0]] },
+    { ...args, files: [files[0], '../out.txt'] },
+    { action: 'list', files, edits },
+  ]) {
+    assert.equal((await runWorker(root, request)).status, 'failed')
+    assert.equal(await readFile(path.join(root, files[0]), 'utf8'), '\ufeffold\r\n')
+  }
+  const success = await runWorker(root, args)
+  assert.equal(success.status, 'completed', JSON.stringify(success))
+  assert.deepEqual(success.items.map(row => row.target), files)
+  assert.equal(await readFile(path.join(root, files[0]), 'utf8'), '\ufeffnew\r\n')
+  assert.equal(await readFile(path.join(root, files[1]), 'utf8'), 'new\n')
+})
+
+test('an interrupted shared replacement resumes pending paths from the durable batch only', { timeout: 30000 }, async t => {
+  const root = await workspace(t)
+  const files = ['completed.txt', 'pending.txt']
+  const tail = '中文\r\n'
+  await Promise.all(files.map(file => writeFile(path.join(root, file), 'old ' + tail)))
+  // Stop the real worker immediately after it persists its first completed
+  // file. An fs.watch race could otherwise kill it in a different state.
+  const stopAfterCommit = `import json, os, pathlib, runpy, sys
+worker = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(worker.parent))
+engine = runpy.run_path(str(worker))
+save = engine['atomic_json']
+def interrupted_save(path, record):
+    save(path, record)
+    if record['items'][0]['status'] == 'completed': os._exit(91)
+engine['run'].__globals__['atomic_json'] = interrupted_save
+engine['run'](json.load(sys.stdin))`
+  const child = spawn(python, ['-B', '-c', stopAfterCommit, worker], { stdio: ['pipe', 'ignore', 'pipe'] })
+  child.stdin.end(JSON.stringify({ root, session: 'test-session', request: { action: 'run', files,
+    edits: [{ oldText: 'old', newText: 'new', count: 1 }] } }))
+  let stderr = ''
+  child.stderr.on('data', data => { stderr += data })
+  const code = await new Promise((resolve, reject) => { child.on('close', resolve); child.on('error', reject) })
+  assert.equal(code, 91, stderr)
+  const first = await stat(path.join(root, files[0]), { bigint: true })
+  const { id, status } = (await runWorker(root, { action: 'list' })).items[0]
+  assert.equal(status, 'partial')
+  assert.equal(await readFile(path.join(root, files[1]), 'utf8'), 'old ' + tail)
+  const resumed = await runWorker(root, { action: 'resume', id })
+  assert.equal(resumed.id, id)
+  assert.equal(resumed.status, 'completed', JSON.stringify(resumed))
+  assert.equal(resumed.counts.completed, files.length)
+  const after = await stat(path.join(root, files[0]), { bigint: true })
+  assert.equal(after.ino, first.ino)
+  assert.equal(after.mtimeNs, first.mtimeNs)
+  for (const file of files) assert.equal(await readFile(path.join(root, file), 'utf8'), 'new ' + tail)
+})
+
 test('collisions, dependent paths, binary text and match-count conflicts cannot partially alter a batch', async t => {
   const root = await workspace(t)
   await writeFile(path.join(root, 'a'), 'A')

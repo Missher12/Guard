@@ -12,6 +12,8 @@ import uuid
 
 from worker_common import MAX_BYTES, require, linked, safe_path, version
 
+MAX_BATCH_BYTES = 2 * 1024 * 1024
+
 
 def path_key(path):
     # Conservatively reject case/Unicode aliases across both supported platforms.
@@ -44,7 +46,17 @@ def inputs_of(root, op, sources):
     return sources
 
 
-def preflight(root, operations):
+def file_operations(request):
+    if "files" not in request and "edits" not in request:
+        return request.get("operations"), None
+    require("operations" not in request, "共享替换请使用 files 和 edits，不能同时传入 operations")
+    files, edits = request.get("files"), request.get("edits")
+    require(isinstance(files, list) and 1 <= len(files) <= 100, "需要 1–100 个明确文件路径")
+    require(isinstance(edits, list) and 1 <= len(edits) <= 100, "需要 1–100 项共享文本替换")
+    return [{"kind": "replace_text", "source": file} for file in files], edits
+
+
+def preflight(root, operations, shared_edits=None):
     require(isinstance(operations, list) and 1 <= len(operations) <= 100, "每批需要 1–100 项明确操作")
     items, reads, writes = [], [], []
     for index, op in enumerate(operations):
@@ -64,6 +76,7 @@ def preflight(root, operations):
                 from office.operations import validate_operation
                 validate_operation(op, sources, root)
             target = safe_path(root, op.get("destination", op["source"]))
+            row["target"] = str(target.relative_to(root))
             overwrite = kind == "replace_text" or (kind == "office" and op.get("overwrite") is True)
             if overwrite:
                 require(target == sources[0], "覆盖只能用于原文件")
@@ -77,8 +90,7 @@ def preflight(root, operations):
                     parent = parent.parent
                 require(parent.stat().st_dev == sources[0].stat().st_dev, "跨磁盘移动请先复制并核对，再单独处理源文件")
             if kind == "replace_text":
-                replace_text(sources[0], op.get("edits"))
-            row["target"] = str(target.relative_to(root))
+                replace_text(sources[0], op.get("edits", shared_edits))
             row["overwrite"] = overwrite
             reads.append((index, {path_key(p) for p in inputs}))
             writes.append((index, path_key(target)))
@@ -94,10 +106,12 @@ def preflight(root, operations):
 
 
 def atomic_json(path, value):
+    data = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    require(len(data) <= MAX_BATCH_BYTES, "批次记录超过 2 MiB 限制，请分批处理")
     fd, temp = tempfile.mkstemp(prefix=".record-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, path)
@@ -150,7 +164,7 @@ def recover(root, row):
         row["error"] = "执行效果尚不能确认，请检查目标文件；不会自动重放"
 
 
-def execute_item(root, row, save, runtime):
+def execute_item(root, row, save, runtime, shared_edits=None):
     op = row["operation"]
     sources = [safe_path(root, p) for p in sources_of(op)]
     inputs = inputs_of(root, op, sources)
@@ -176,7 +190,7 @@ def execute_item(root, row, save, runtime):
                 shutil.copyfile(source, temp)
                 require(temp.stat().st_size == source.stat().st_size, "复制输出大小不符")
             elif op["kind"] == "replace_text":
-                content = replace_text(source, op["edits"])
+                content = replace_text(source, op.get("edits", shared_edits))
                 if content == source.read_bytes():
                     row.update(status="skipped", result={"reason": "内容没有变化"})
                     return
@@ -216,6 +230,8 @@ def run(payload):
     require(isinstance(session, str) and session, "需要当前会话身份")
     request = payload["request"]
     family = payload.get("family", "files")
+    if family == "files" and ("files" in request or "edits" in request):
+        require(request.get("action") == "run", "共享替换参数只用于 action=run")
     if request.get("action") in {"resume", "status"}:
         require(set(request) <= {"action", "id"}, "续做或查看状态只接受原批次 ID，不能更换参数")
     if family == "office" and request.get("action") in {"inspect", "read"}:
@@ -237,7 +253,7 @@ def run(payload):
             matched = 0
             for file in paths:
                 require(not linked(file), "批次记录不能是链接")
-                require(file.stat().st_size <= 2 * 1024 * 1024, "批次记录过大")
+                require(file.stat().st_size <= MAX_BATCH_BYTES, "批次记录过大")
                 record = json.loads(file.read_text(encoding="utf-8"))
                 if record.get("session") == session and record.get("family") == family:
                     matched += 1
@@ -260,24 +276,27 @@ def run(payload):
             identity = request.get("id", "")
             require(isinstance(identity, str) and str(uuid.UUID(identity)) == identity, "批次 ID 无效")
             record_path = safe_path(root, str(store / (identity + ".json")), internal=True)
-            require(record_path.stat().st_size <= 2 * 1024 * 1024, "批次记录过大")
+            require(record_path.stat().st_size <= MAX_BATCH_BYTES, "批次记录过大")
             record = json.loads(record_path.read_text(encoding="utf-8"))
             require(record["session"] == session and record["family"] == family, "批次不属于当前会话或工具")
             require(record["root"] == str(root) and record["rootIdentity"] == [str(root.stat().st_dev), str(root.stat().st_ino)], "会话目录已被替换")
         else:
-            operations = request.get("operations")
+            shared_edits = None
             if family == "office":
                 from office.operations import make_operations
                 operations = make_operations(root, request)
             else:
                 require(request.get("action") == "run", "action 必须是 run 或 resume")
+                operations, shared_edits = file_operations(request)
             on_error = request.get("onError", "stop")
             require(on_error in {"stop", "continue"}, "onError 必须是 stop 或 continue")
             record = {"id": str(uuid.uuid4()), "root": str(root), "rootIdentity": [str(root.stat().st_dev), str(root.stat().st_ino)], "onError": on_error,
-                      "session": session, "family": family, "items": preflight(root, operations)}
+                      "session": session, "family": family, "items": preflight(root, operations, shared_edits)}
             if any(row["status"] == "failed" for row in record["items"]):
                 record["id"] = None
                 return summarize(record, "failed")
+            if shared_edits is not None:
+                record["sharedEdits"] = shared_edits
             record_path = store / (record["id"] + ".json")
         save = lambda: atomic_json(record_path, record)
         if family == "office" and not payload.get("runtime", {}).get("officeCli") and any(
@@ -296,7 +315,7 @@ def run(payload):
                 continue
             try:
                 row["status"] = "pending"
-                execute_item(root, row, save, payload.get("runtime", {}))
+                execute_item(root, row, save, payload.get("runtime", {}), record.get("sharedEdits"))
             except Exception as error:
                 row["error"] = str(error)
                 if row["status"] != "uncertain":
@@ -311,8 +330,8 @@ def run(payload):
 
 if __name__ == "__main__":
     try:
-        raw = sys.stdin.buffer.read(2 * 1024 * 1024 + 1)
-        require(len(raw) <= 2 * 1024 * 1024, "请求超过 2 MiB 限制")
+        raw = sys.stdin.buffer.read(MAX_BATCH_BYTES + 1)
+        require(len(raw) <= MAX_BATCH_BYTES, "请求超过 2 MiB 限制")
         output = run(json.loads(raw))
     except Exception as error:
         output = {"status": "failed", "error": str(error), "items": []}
