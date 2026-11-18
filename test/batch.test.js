@@ -74,7 +74,7 @@ def interrupted_save(path, record):
     save(path, record)
     if record['items'][0]['status'] == 'completed': os._exit(91)
 engine['run'].__globals__['atomic_json'] = interrupted_save
-engine['run'](json.load(sys.stdin))`
+engine['run'](json.load(sys.stdin.buffer))`
   const child = spawn(python, ['-B', '-c', stopAfterCommit, worker], { stdio: ['pipe', 'ignore', 'pipe'] })
   child.stdin.end(JSON.stringify({ root, session: 'test-session', request: { action: 'run', files,
     edits: [{ oldText: 'old', newText: 'new', count: 1 }] } }))
