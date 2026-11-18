@@ -1,3 +1,5 @@
+import { stat } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,10 +24,25 @@ async function callTool(ctx, exec, name, args) {
   return result.value
 }
 
+async function hostOfficeCli(ctx, exec) {
+  if (!service(exec, 'officeKit')) return
+  const fromHost = createRequire(ctx.get('profileContext')?.installAnchor ?? import.meta.url)
+  try {
+    // The worker runs outside Electron and needs the physical CLI on Desktop.
+    const cli = fromHost.resolve('@deepseek-ai/libreoffice-kit/cli').replace(/\.asar(?=[\\/]|$)/, '.asar.unpacked')
+    if ((await stat(cli)).isFile()) return cli
+  } catch (error) {
+    if (!['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ENOENT', 'ENOTDIR'].includes(error.code)) throw error
+  }
+}
+
 async function dependencies(ctx, exec, office, action) {
   const runtime = await callTool(ctx, exec, 'load_workspace_dependencies', {})
   if (!path.isAbsolute(runtime?.python ?? '')) throw Error('宿主未提供 Python 绝对路径，请启用 DSH 办公运行时。')
   if (office && ['export_pdf', 'recalculate'].includes(action)) {
+    const officeCli = path.isAbsolute(runtime.node ?? '') ? await hostOfficeCli(ctx, exec) : undefined
+    if (officeCli) return { ...runtime, officeCli }
+    // Older hosts supply their Office CLI in the corresponding skill result.
     const result = await callTool(ctx, exec, 'skill', { name: action === 'recalculate' ? 'office-recalculate' : 'office-export-pdf' })
     const strings = []
     function collect(value) {

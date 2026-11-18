@@ -1,4 +1,4 @@
-# Guard 0.5.2
+# Guard 0.5.3
 
 ![Guard · 执行守卫（品牌插画）](docs/images/cover-v2.png)
 
@@ -15,20 +15,20 @@
 
 ## 安装
 
-支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1 / 0.2.2-rc.3**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主 Office skills 配置的 LibreOffice Kit。
+支持 DSH **0.2.1-rc.4 / 0.2.2-rc.1 / 0.2.2-rc.3 / 0.2.2-rc.4**，Node **24.9+**。批处理需要当前会话提供 `subprocess`、沙箱策略及 `load_workspace_dependencies`；桌面版自带的 Python/Office 运行时可直接使用。PDF 读写库随插件附带，不修改全局 Python。转换和公式重算使用宿主启用的 LibreOffice Kit；旧版宿主可通过 Office 技能提供引擎路径。
 
-优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.5.2.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
+优先使用 DSH 插件管理器原位安装 `dsh-windows-guard-0.5.3.tgz`，按宿主提示加载更新。需要使用命令行安装时，在宿主空闲并正常退出后执行：
 
 macOS：
 
 ```sh
-dsh plugin --profile desktop add ./dsh-windows-guard-0.5.2.tgz
+dsh plugin --profile desktop add ./dsh-windows-guard-0.5.3.tgz
 ```
 
 Windows PowerShell：
 
 ```powershell
-$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.5.2.tgz').Path
+$bundlePath = (Resolve-Path -LiteralPath '.\dsh-windows-guard-0.5.3.tgz').Path
 dsh.cmd plugin --profile desktop add "$bundlePath"
 ```
 
@@ -162,7 +162,7 @@ PDF 拆分允许同一原件产生多个明确输出：
 - 守卫继承 DSH 权限、沙箱、取消与宿主工具限制；缺少执行器或运行时就说明原因，不自行安装软件、放宽权限或切换到无沙箱。
 - 普通复制保留文件内容与权限位；不承诺复制所有 ACL、扩展属性或资源叉。只支持普通文件，不递归处理目录，不经过符号链接/目录联接。
 - 旧 Office 格式、宏、加密、签名、嵌入对象、复杂图表与外部链接等需要适用的独立工作流，不默认覆盖。
-- 写入公式不是重算。`formulaRecalculated` 单独报告；`visualChecked: false` 表示尚未检查外观。外观修改应再用宿主 `office-render` 查看相关页面。
+- 写入公式不是重算。`formulaRecalculated` 单独报告；`visualChecked: false` 表示尚未检查外观。外观修改应再用宿主的 Office 渲染工具查看相关页面。
 - PDF 无文本页可能是扫描件或空白页，本版不执行 OCR。读取结果的 `complete`/`nextOffset` 说明当前范围是否已读完。
 - 这些保证覆盖受管批处理入口；不能仅凭提示词为任意自写 shell/Python 脚本提供相同保证。
 
