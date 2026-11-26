@@ -7,7 +7,7 @@
 <p>减少 Token 与不可用工具调用，提高 Windows/macOS 工作效率，减少重复失败。</p>
 
 <p>
-  <a href="https://github.com/Missher12/Guard/releases/tag/v0.5.0"><img src="https://img.shields.io/badge/Release-0.5.0-4D6BFE?style=flat-square" alt="Release: 0.5.0"></a>
+  <a href="https://github.com/Missher12/Guard/releases/tag/v0.6.1"><img src="https://img.shields.io/badge/Release-0.6.1-4D6BFE?style=flat-square" alt="Release: 0.6.1"></a>
   <a href="https://github.com/Missher12/Guard"><img src="https://img.shields.io/badge/%E6%96%87%E6%A1%A3-%E4%B8%AD%E6%96%87-4D6BFE?style=flat-square" alt="文档: 中文"></a>
 </p>
 
@@ -18,7 +18,7 @@
 ---
 
 <!-- current-source -->
-当前源码与安装包：**0.5.0** · [分支 `main`](https://github.com/Missher12/Guard/tree/main) · [Release 与安装包](https://github.com/Missher12/Guard/releases/tag/v0.5.0)。
+当前源码与安装包：**0.6.1** · [分支 `main`](https://github.com/Missher12/Guard/tree/main) · [Release 与安装包](https://github.com/Missher12/Guard/releases/tag/v0.6.1)。
 <!-- /current-source -->
 
 ## 功能一览
@@ -102,7 +102,7 @@ Guard 提供执行前检查、工具可用性处理和结果整理。它不自�
 <details>
 <summary>Guard 支持哪些系统？</summary>
 
-0.5.0 同时支持 Windows 与 macOS；安装标识仍为 `dsh-windows-guard`，已有配置继续使用。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
+0.6.1 同时支持 Windows 与 macOS；安装标识仍为 `dsh-windows-guard`，已有配置继续使用。Linux 和 WSL 中单独运行的 Linux DSH 会跳过本插件。
 
 </details>
 
